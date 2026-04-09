@@ -9,55 +9,64 @@ class MathEngine:
         self.x = sp.symbols('x')
 
     def parse_expression(self, expr_str):
-        """支持隐式乘法（如2x）并解决命名空间冲突"""
-        clean_str = expr_str.replace('^', '**')
+        # 清洗 LaTeX 遗留字符
+        clean_str = expr_str.replace('\\', '').replace('cdot', '*')
         transformations = standard_transformations + (implicit_multiplication_application,)
         try:
-            # 显式注入 sympy 字典，确保 asin, acos 等函数在云端被正确解析
             return parse_expr(clean_str, transformations=transformations, global_dict=sp.__dict__)
-        except Exception:
+        except:
             return sp.sympify(clean_str)
 
     def get_analysis(self, expr):
-        """计算导数和最简原函数"""
         deriv = sp.diff(expr, self.x)
-        # 求积分并强制简化，方便作业展示
         integral = sp.integrate(expr, self.x)
         return deriv, sp.simplify(integral)
 
     def generate_plotly_plot(self, expr_list):
         fig = go.Figure()
-        x_vals = np.linspace(-15, 15, 1500)
+        # 高采样率确保曲线平滑
+        x_vals = np.linspace(-15, 15, 3000)
 
         for expr, label, color in expr_list:
             try:
-                # 【全象限绘图补丁】：手动替换幂运算，确保负数分数次方（如x**2/3）正常显示
-                fixed_expr = expr.replace(
-                    lambda e: e.is_Pow,
-                    lambda e: sp.Pow(sp.Abs(e.base), e.exp)
-                )
+                # 计院严谨性：不再使用 sp.Abs 强制转换，保留原始数学特性
+                # 使用 lambdify 生成 numpy 函数
+                f_np = sp.lambdify(self.x, expr, modules=['numpy'])
 
-                f_np = sp.lambdify(self.x, fixed_expr, modules=['numpy'])
-                y_plot = np.real(f_np(x_vals))
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    # 关键：计算原始值，允许产生复数(Complex)
+                    y_raw = f_np(x_vals.astype(complex))
 
-                # 过滤异常值，防止 tan(x) 等函数拉断坐标轴
-                y_plot[np.abs(y_plot) > 100] = np.nan
+                    # 1. 处理定义域：如果虚部绝对值 > 1e-9，说明在实数域无定义，设为 NaN
+                    y_plot = np.where(np.abs(np.imag(y_raw)) < 1e-9, np.real(y_raw), np.nan)
+
+                    # 2. 处理 sin(x)/x 等 0/0 型间断点
+                    # 找到 x 极接近 0 的索引
+                    zero_idx = np.abs(x_vals).argmin()
+                    if np.isnan(y_plot[zero_idx]) or np.isinf(y_plot[zero_idx]):
+                        # 使用 SymPy 计算精确极限
+                        try:
+                            lim = float(sp.limit(expr, self.x, 0))
+                            y_plot[zero_idx] = lim
+                        except:
+                            pass
+
+                    # 3. 过滤垂直渐近线带来的视觉污染
+                    y_plot[np.abs(y_plot) > 100] = np.nan
 
                 fig.add_trace(go.Scatter(
-                    x=x_vals, y=y_plot,
-                    mode='lines', name=label,
-                    line=dict(color=color, width=2.5),
-                    connectgaps=False
+                    x=x_vals, y=y_plot, mode='lines', name=label,
+                    line=dict(color=color, width=3),
+                    connectgaps=False  # 严格不连接 NaN 断点，确保 sqrt(x) 定义域视觉正确
                 ))
-            except Exception:
+            except:
                 continue
 
         fig.update_layout(
             template="plotly_white",
             hovermode="x unified",
-            xaxis=dict(title="x", zeroline=True, zerolinewidth=2, range=[-6, 6]),
-            yaxis=dict(title="y", zeroline=True, zerolinewidth=2, range=[-6, 6]),
-            dragmode='pan',
-            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+            xaxis=dict(title="x", zeroline=True, zerolinewidth=2, range=[-7, 7]),
+            yaxis=dict(title="y", zeroline=True, zerolinewidth=2, range=[-5, 5]),
+            dragmode='pan'  # 默认开启拖动
         )
         return fig
