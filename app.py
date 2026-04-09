@@ -4,19 +4,30 @@ from ai_logic import MathAgent
 import sympy as sp
 
 # 1. 基础配置
+# 本地测试直接填 Key，云端部署时建议换回 st.secrets
 MY_API_KEY = "sk-c262ed499b0643d6bbc979f93b00ee5e"
 
 
 @st.cache_resource
 def init_resources():
-    return MathEngine(), MathAgent(MY_API_KEY)
+    # 捕获可能的初始化异常
+    try:
+        return MathEngine(), MathAgent(MY_API_KEY)
+    except Exception as e:
+        st.error(f"初始化引擎失败: {e}")
+        return None, None
 
 
 engine, agent = init_resources()
 
-st.set_page_config(page_title="基于DeepSeek的一元函数微积分运算处理器", layout="wide", initial_sidebar_state="expanded")
+# 严格保留你的页面配置
+st.set_page_config(
+    page_title="基于DeepSeek的一元函数微积分运算处理器",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# 自定义 CSS 样式，更有质感
+# 严格保留你的自定义 CSS
 st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
@@ -24,26 +35,16 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# 严格保留你的标题
 st.title("🎓 基于DeepSeek的一元函数微积分运算处理器")
 st.caption("由 DeepSeek-V3 与 SymPy 驱动的符号运算实验室")
 
-# 2. 侧边栏：加入快捷案例
+# 2. 侧边栏：按照你的要求去掉了典型函数选择
 with st.sidebar:
     st.header("📌 实验控制台")
 
-    # 案例库：方便演示
-    st.subheader("内置案例")
-    preset = st.selectbox("选择典型函数：",
-                          ["手动输入", "经典星形线 (x**2/3)", "高斯分布 (exp(-x**2))", "震荡衰减 (sin(x)/x)"])
-
-    preset_map = {
-        "经典星形线 (x**2/3)": "x**(2/3)",
-        "高斯分布 (exp(-x**2))": "exp(-x**2)",
-        "震荡衰减 (sin(x)/x)": "sin(x)/x"
-    }
-
-    default_val = preset_map.get(preset, "x**2")
-    user_input = st.text_input("当前函数 f(x):", value=default_val)
+    # 修改点：默认值设为 sin(x)/x，方便你直接测试修复效果
+    user_input = st.text_input("当前函数 f(x):", value="sin(x)/x")
 
     st.divider()
     st.subheader("视图选项")
@@ -55,13 +56,16 @@ with st.sidebar:
 
 # 3. 运行逻辑
 if user_input:
+    # 调用 AI 将输入转为公式
     formula_str = agent.chat_to_formula(user_input)
+
     if formula_str:
         try:
+            # 这里的 engine 会自动处理字符串中的反斜杠补丁
             expr = engine.parse_expression(formula_str)
             deriv, integral = engine.get_analysis(expr)
 
-            # 绘图数据
+            # 准备绘图数据
             plot_items = []
             if show_f: plot_items.append((expr, "函数 f(x)", "#1f77b4"))
             if show_deriv: plot_items.append((deriv, "导函数 f'(x)", "#d62728"))
@@ -71,7 +75,7 @@ if user_input:
             fig = engine.generate_plotly_plot(plot_items)
             st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
-            # 结果展示区
+            # 严格保留你的结果展示区文案
             st.markdown("### 📝 数学推导报告")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -82,9 +86,10 @@ if user_input:
                 st.latex(sp.latex(deriv))
             with col3:
                 st.warning("**不定积分 F(x)**")
+                # 即使积分算不出来，也会优雅显示
                 st.latex(f"{sp.latex(integral)} + C")
 
-            # 下载功能：作业提交加分项
+            # 严格保留你的下载功能
             st.divider()
             html_data = fig.to_html()
             st.download_button(
@@ -95,4 +100,12 @@ if user_input:
             )
 
         except Exception as e:
-            st.error(f"分析失败，请检查输入格式。错误详情: {e}")
+            # 如果解析失败，把 AI 识别的结果打印出来，方便调试
+            st.error(f"数学引擎解析失败。AI 识别结果: `{formula_str}`")
+            st.warning(f"错误详情: {e}")
+    else:
+        st.error("AI 接口未返回结果，请检查网络或 API Key。")
+
+# 底部页脚
+st.write("---")
+st.caption("BUPT Computer Science | Calculus Lab v2.0")
