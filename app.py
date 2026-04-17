@@ -24,16 +24,13 @@ def init_resources():
 
 engine, agent = init_resources()
 
-# 还原项目名称
+# 页面配置
 st.set_page_config(page_title="基于DeepSeek V3的微积分绘图工具", layout="wide")
 
-# ✅ 优化 CSS：改善触屏手感
+# 优化 CSS：提升触屏手势响应
 st.markdown("""
     <style>
-    .js-plotly-plot { 
-        touch-action: pan-x pan-y pinch-zoom !important; 
-        user-select: none;
-    }
+    .js-plotly-plot { touch-action: pan-x pan-y pinch-zoom !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -56,7 +53,7 @@ with st.sidebar:
     user_input = st.text_input(
         "描述或输入函数:",
         value=default_val,
-        help="支持自然语言（如：x的平方）或标准公式。"
+        help="支持直接描述（如：x的绝对值）或标准数学公式。"
     )
 
     if not is_3d:
@@ -70,20 +67,20 @@ with st.sidebar:
 # ==========================================
 st.title("🚀 基于DeepSeek V3的微积分绘图工具")
 
-# ✅ 针对用户的 Tips
-with st.expander("💡 快速使用指南 (点击展开/收起)", expanded=True):
+# ✅ 针对用户的 Tips：简单有效
+with st.expander("💡 快速使用指南", expanded=True):
     st.markdown("""
-    * **AI 绘图**：直接输入口头描述（如“x的平方”）或数学公式。
+    * **AI 绘图**：直接输入口头描述或数学公式，系统自动识别。
     * **视角控制**：
-        * **平移与转动**：点击图像右上角灰色按钮栏的 **[十字箭头]** 切换平移，点击 **[旋转图标]** 切换转动。
-        * **画面缩放**：使用右上角 **[+] [-] 按钮**，或双指捏合图像（电脑端滚动滑轮）。
-    * **一键重置**：如果画面调乱了，点击右上角 **[小房子]** 图标即可恢复初始视角。
+        * **切换平移/转动**：点击图像右上角灰色按钮栏的 **[十字箭头]** 切换平移，点击 **[旋转图标]** 切换转动。
+        * **缩放画面**：使用右上角 **[+] [-] 按钮**，或者直接在图像上双指捏合（电脑端滚动滑轮）。
+    * **视角锁定**：系统会自动记住你的缩放和旋转角度。切换平移/转动模式时，**图像位置不会复位**。
+    * **恢复初始**：如果画面调乱了，点击右上角 **[小房子]** 图标。
     """)
 
 st.markdown("---")
 
 if user_input:
-    # 调用 AI 逻辑
     formula = agent.chat_to_formula(user_input, is_3d=is_3d)
 
     if formula:
@@ -92,7 +89,7 @@ if user_input:
             st.markdown("### 🧮 当前解析函数")
             st.latex(rf"f({'x, y' if is_3d else 'x'}) = {sp.latex(expr)}")
 
-            # ✅ 这里的 config 保持灰色按钮可用
+            # 工具栏配置：强制中文、显示按钮
             config = {
                 'scrollZoom': True,
                 'displayModeBar': True,
@@ -106,25 +103,23 @@ if user_input:
                 fig = engine.generate_3d_plot(expr)
                 if fig:
                     fig.update_layout(
+                        # 🚀 核心修复 1：将 uirevision 锁定在公式上，数据不变，视角绝对不重置
+                        uirevision=str(expr),
                         scene=dict(dragmode='orbit'),
                         height=600,
-                        margin=dict(l=0, r=0, b=0, t=0),
-                        # 🚀 关键改进：设置 uirevision 为固定值，切换模式时不再复位视角
-                        uirevision='constant'
+                        margin=dict(l=0, r=0, b=0, t=0)
                     )
-                    st.plotly_chart(fig, use_container_width=True, theme=None, config=config)
+                    # 🚀 核心修复 2：固定 key，防止 Streamlit 重新创建组件导致状态丢失
+                    st.plotly_chart(fig, use_container_width=True, theme=None, config=config, key=f"plot_3d_{formula}")
 
-                # 3D 分析展示
-                st.markdown("### 📝 偏导数")
+                # 3D 偏导分析
+                st.markdown("### 📝 偏导数分析")
                 fx, fy = sp.diff(expr, engine.x).doit(), sp.diff(expr, engine.y).doit()
                 c1, c2 = st.columns(2)
-                with c1:
-                    st.latex(f"f_x = {sp.latex(fx)}")
-                with c2:
-                    st.latex(f"f_y = {sp.latex(fy)}")
+                with c1: st.latex(rf"f_x = {sp.latex(fx)}")
+                with c2: st.latex(rf"f_y = {sp.latex(fy)}")
 
             else:
-                # 2D 逻辑
                 deriv, integral = engine.get_analysis_2d(expr)
                 items = []
                 if show_f: items.append((expr, "f(x)", "#1f77b4"))
@@ -134,20 +129,18 @@ if user_input:
                 fig = engine.generate_2d_plot(items)
                 if fig:
                     fig.update_layout(
-                        dragmode='pan',
-                        height=500,
-                        # 🚀 2D 同样设置 uirevision，保证缩放不被重置
-                        uirevision='constant'
+                        # 🚀 2D 同样锁定视角，切换按钮不复位
+                        uirevision=str(expr),
+                        dragmode='pan', 
+                        height=500
                     )
-                    st.plotly_chart(fig, use_container_width=True, theme=None, config=config)
+                    st.plotly_chart(fig, use_container_width=True, theme=None, config=config, key=f"plot_2d_{formula}")
 
-                # 2D 报告展示
+                # 2D 解析报告
                 st.markdown("### 📝 解析推导报告")
                 col1, col2 = st.columns(2)
-                with col1:
-                    st.latex(f"f'(x) = {sp.latex(deriv)}")
-                with col2:
-                    st.latex(f"F(x) = {sp.latex(integral)}")
+                with col1: st.latex(f"f'(x) = {sp.latex(deriv)}")
+                with col2: st.latex(f"F(x) = {sp.latex(integral)}")
 
         except Exception as e:
             st.error(f"渲染出错: {e}")
