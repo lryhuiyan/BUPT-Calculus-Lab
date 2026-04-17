@@ -69,12 +69,30 @@ with st.sidebar:
 st.title("🚀 基于DeepSeek V3的微积分绘图工具")
 
 # 用户交互引导
-with st.expander("💡 点击查看使用小贴士 (Tips)", expanded=False):
-    st.markdown("""
-    * **交互优化**：手机端支持双指缩放图像；点击右上角“小房子”可重置视角。
-    * **原理说明**：针对发散函数（如 $x^{-2/3}$）已做物理断路，确保渲染真实。
-    * **本地运行**：若在本地运行报错找不到 Secrets，请在项目根目录创建 `.streamlit/secrets.toml`。
-    """)
+# ✅ 针对全设备优化的用户交互提示语
+with st.expander("💡 快速上手指南 (User Guide)", expanded=True):
+    st.columns(2)
+    col_pc, col_phone = st.columns(2)
+
+    with col_pc:
+        st.markdown("""
+        **💻 电脑端操作 (Mouse)**
+        * **缩放**：滚动鼠标滑轮。
+        * **平移/旋转**：左键按住拖拽。
+        * **精确查看**：鼠标悬停在曲线上，可查看 $(x, y)$ 坐标及实时曲率 $\kappa$。
+        * **快捷复位**：点击右上角“小房子”图标恢复初始视角。
+        """)
+
+    with col_phone:
+        st.markdown("""
+        **📱 手机/触屏操作 (Touch)**
+        * **缩放**：双指张合（捏合）图像。
+        * **旋转/平移**：单指滑动。
+        * **查看数值**：手指长按并滑动。
+        * **进阶建议**：切换至**横屏模式**可获得更大的绘图视野！
+        """)
+
+    st.info("🤖 **AI 提示**：你可以直接输入“x的平方”或“x加y的绝对值”，后台 DeepSeek 会自动为你精准翻译。")
 
 st.markdown("---")
 
