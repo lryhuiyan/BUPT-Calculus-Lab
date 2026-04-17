@@ -3,109 +3,128 @@ from math_engine import MathEngine
 from ai_logic import MathAgent
 import sympy as sp
 
-# 1. 基础配置
-# 本地测试直接填 Key，云端部署时建议换回 st.secrets
+# ==========================================
+# ⚙️ 初始化与配置
+# ==========================================
+# 确保这里的 API_KEY 是有效的
 MY_API_KEY = "sk-c262ed499b0643d6bbc979f93b00ee5e"
 
 
 @st.cache_resource
 def init_resources():
-    # 捕获可能的初始化异常
-    try:
-        return MathEngine(), MathAgent(MY_API_KEY)
-    except Exception as e:
-        st.error(f"初始化引擎失败: {e}")
-        return None, None
+    """全局单例模式初始化引擎，避免每次刷新页面重复创建对象"""
+    return MathEngine(), MathAgent(MY_API_KEY)
 
 
 engine, agent = init_resources()
 
-# 严格保留你的页面配置
-st.set_page_config(
-    page_title="基于DeepSeek的一元函数微积分运算处理器",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# 配置页面标题和布局宽度
+st.set_page_config(page_title="基于DeepSeek V3的微积分绘图工具", layout="wide")
 
-# 严格保留你的自定义 CSS
-st.markdown("""
-    <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# 严格保留你的标题
-st.title("🎓 基于DeepSeek的一元函数微积分运算处理器")
-st.caption("由 DeepSeek-V3 与 SymPy 驱动的符号运算实验室")
-
-# 2. 侧边栏：按照你的要求去掉了典型函数选择
+# ==========================================
+# 👈 侧边栏：实验室控制面板
+# ==========================================
 with st.sidebar:
-    st.header("📌 实验控制台")
+    st.header("⚙️ 工具配置")
 
-    # 修改点：默认值设为 sin(x)/x，方便你直接测试修复效果
-    user_input = st.text_input("当前函数 f(x):", value="sin(x)/x")
+    # 增加 tooltip (help) 解释按钮作用
+    if st.button("🔄 物理刷新 (清除异常缓存)", help="当图像卡死或渲染出现残影时，点击此按钮强制重置内核。"):
+        st.cache_resource.clear()
+        st.rerun()
 
-    st.divider()
-    st.subheader("视图选项")
-    show_f = st.checkbox("绘制 f(x)", value=True)
-    show_deriv = st.checkbox("绘制 f'(x)", value=True)
-    show_integral = st.checkbox("绘制 F(x)", value=False)
+    st.markdown("---")
+    mode = st.radio("选择模式:", ["一元函数", "二元函数"])
+    is_3d = (mode == "二元函数")
 
-    submit = st.button("运行实验")
+    # 用户输入区
+    st.markdown("### ✍️ 函数输入")
+    user_input = st.text_input(
+        "描述或输入函数:",
+        value="x**(-2/3)+y**(-2/3)" if is_3d else "x**(2/3)",
+        help="支持自然语言（如：x的平方加y的平方）或 Python 公式（如：x**2 + y**2）。"
+    )
 
-# 3. 运行逻辑
+    # 2D 专属：图层开关
+    if not is_3d:
+        st.subheader("🖼️ 图层显示")
+        show_f = st.checkbox("函数 f(x)", value=True)
+        show_deriv = st.checkbox("导函数 f'(x)", value=True)
+        show_integral = st.checkbox("最简原函数 F(x)", value=True)
+
+# ==========================================
+# 📊 主页面：图像与解析展示
+# ==========================================
+st.title("🚀 基于DeepSeek V3的微积分绘图工具")
+
+# ✅ 新增：友好的用户交互提示语
+with st.expander("💡 点击查看使用小贴士 (Tips)", expanded=False):
+    st.markdown("""
+    * **自然语言驱动**：你可以直接对它说 _“求以x为底2的对数”_ 或 _“x的绝对值乘以sin(x)”_，AI 会自动帮你翻译成标准数学公式。
+    * **极限视觉呈现**：针对类似 $x^{-2/3}$ 这种在 $0$ 处发散的函数，本工具做了底层的物理断路处理，完美还原“直冲云霄”的数学直觉。
+    * **视图操作**：
+        * **2D 模式**：鼠标左键按住拖拽平移，滚轮缩放，鼠标悬停可查看精确的 $(x, y)$ 坐标与实时曲率 $\kappa$。
+        * **3D 模式**：鼠标左键旋转视角，右键平移，滚轮缩放。
+    """)
+
+st.markdown("---")
+
+# 主逻辑执行区
 if user_input:
-    # 调用 AI 将输入转为公式
-    formula_str = agent.chat_to_formula(user_input)
+    # 1. 语言大模型翻译公式
+    formula = agent.chat_to_formula(user_input, is_3d=is_3d)
 
-    if formula_str:
+    if formula:
         try:
-            # 这里的 engine 会自动处理字符串中的反斜杠补丁
-            expr = engine.parse_expression(formula_str)
-            deriv, integral = engine.get_analysis(expr)
+            # 2. 数学引擎解析公式
+            expr = engine.parse_expression(formula)
 
-            # 准备绘图数据
-            plot_items = []
-            if show_f: plot_items.append((expr, "函数 f(x)", "#1f77b4"))
-            if show_deriv: plot_items.append((deriv, "导函数 f'(x)", "#d62728"))
-            if show_integral: plot_items.append((integral, "最简原函数 F(x)", "#ff7f0e"))
+            # 展示当前解析出的标准数学公式 (LaTeX格式)
+            st.markdown("### 🧮 当前解析函数")
+            if is_3d:
+                st.latex(rf"f(x, y) = {sp.latex(expr)}")
+            else:
+                st.latex(rf"f(x) = {sp.latex(expr)}")
 
-            # 渲染图表
-            fig = engine.generate_plotly_plot(plot_items)
-            st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
+            st.markdown("---")
 
-            # 严格保留你的结果展示区文案
-            st.markdown("### 📝 数学推导报告")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.info("**解析式 f(x)**")
-                st.latex(sp.latex(expr))
-            with col2:
-                st.success("**一阶导数 f'(x)**")
-                st.latex(sp.latex(deriv))
-            with col3:
-                st.warning("**不定积分 F(x)**")
-                # 即使积分算不出来，也会优雅显示
-                st.latex(f"{sp.latex(integral)} + C")
+            # 3. 渲染 3D 或 2D 图像
+            if is_3d:
+                # 生成 3D 图形对象
+                fig = engine.generate_3d_plot(expr)
+                if fig:
+                    st.plotly_chart(fig, width='stretch', theme=None)
 
-            # 严格保留你的下载功能
-            st.divider()
-            html_data = fig.to_html()
-            st.download_button(
-                label="📥 下载本次实验交互式图像 (HTML)",
-                data=html_data,
-                file_name="bupt_math_report.html",
-                mime="text/html"
-            )
+                # 计算并渲染偏导数 LaTeX
+                st.markdown("### 📝 偏导数")
+                fx, fy = sp.diff(expr, engine.x).doit(), sp.diff(expr, engine.y).doit()
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.latex(f"f_x = {sp.latex(fx)}")
+                with c2:
+                    st.latex(f"f_y = {sp.latex(fy)}")
+
+            else:
+                # 执行 2D 解析几何运算
+                deriv, integral = engine.get_analysis_2d(expr)
+                items = []
+                # 根据用户侧边栏勾选状态，动态推入图层
+                if show_f: items.append((expr, "f(x)", "#1f77b4"))  # 蓝色：原函数
+                if show_deriv: items.append((deriv, "f'(x)", "#d62728"))  # 红色：导函数
+                if show_integral: items.append((integral, "F(x)", "#ff7f0e"))  # 橙色：积分函数
+
+                # 生成 2D 图形对象
+                fig = engine.generate_2d_plot(items)
+                if fig:
+                    st.plotly_chart(fig, width='stretch', theme=None, config={'scrollZoom': True})
+
+                # 渲染解析推导报告 LaTeX
+                st.markdown("### 📝 解析推导报告")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.latex(f"f'(x) = {sp.latex(deriv)}")
+                with col2:
+                    st.latex(f"F(x) = {sp.latex(integral)}")
 
         except Exception as e:
-            # 如果解析失败，把 AI 识别的结果打印出来，方便调试
-            st.error(f"数学引擎解析失败。AI 识别结果: `{formula_str}`")
-            st.warning(f"错误详情: {e}")
-    else:
-        st.error("AI 接口未返回结果，请检查网络或 API Key。")
-
-# 底部页脚
-st.write("---")
-st.caption("BUPT Computer Science | Calculus Lab v2.0")
+            # 捕获并展示引擎深层报错，防止页面直接白屏
+            st.error(f"渲染组件故障: {e}")
