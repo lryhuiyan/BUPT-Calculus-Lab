@@ -8,18 +8,23 @@ import sympy as sp
 # ==========================================
 DEFAULT_KEY = "sk-c262ed499b0643d6bbc979f93b00ee5e"
 
+
 def get_api_key():
     try:
         if "DEEPSEEK_API_KEY" in st.secrets:
             return st.secrets["DEEPSEEK_API_KEY"]
-    except: pass
+    except:
+        pass
     return DEFAULT_KEY
 
+
 MY_API_KEY = get_api_key()
+
 
 @st.cache_resource
 def init_resources():
     return MathEngine(), MathAgent(MY_API_KEY)
+
 
 engine, agent = init_resources()
 
@@ -41,7 +46,7 @@ st.markdown("""
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 工具配置")
-    
+
     if st.button("🔄 物理刷新 (清除异常缓存)"):
         st.cache_resource.clear()
         st.rerun()
@@ -72,10 +77,10 @@ st.title("🚀 基于DeepSeek V3的微积分绘图工具")
 # ✅ 针对用户的 Tips：简单、直观、有效
 with st.expander("💡 快速使用指南 (点击展开/收起)", expanded=True):
     st.markdown("""
-    * **AI 绘图**：直接在左侧输入“x的平方”或公式，AI 会自动识别。
+    * **AI 绘图**：直接在左侧输入函数的口头描述或公式，AI 会自动识别。
     * **如何缩放**：
         * **电脑端**：滚动鼠标滑轮。
-        * **手机端**：双指捏合图像，或者使用图像右上角的 **灰色 [+] [-] 按钮**。
+        * **手机端**：使用图像右上角的 **灰色 [+] [-] 按钮**。
     * **如何移动**：
         * **2D 模式**：单指滑动或左键拖拽。
         * **3D 模式**：单指滑动旋转，点击右上角 **[十字箭头]** 图标切换到平移。
@@ -93,14 +98,14 @@ if user_input:
             expr = engine.parse_expression(formula)
             st.markdown("### 🧮 当前解析函数")
             st.latex(rf"f({'x, y' if is_3d else 'x'}) = {sp.latex(expr)}")
-            
+
             # ✅ 找回灰色按钮：配置 Plotly 工具栏
             config = {
-                'scrollZoom': True,        # 支持双指/滑轮缩放
-                'displayModeBar': True,    # 强制显示右上角灰色按钮栏
-                'displaylogo': False,      # 隐藏 Plotly 图标
-                'locale': 'zh-CN',         # 按钮显示中文说明
-                'doubleClick': 'reset',    # 双击重置
+                'scrollZoom': True,  # 支持双指/滑轮缩放
+                'displayModeBar': True,  # 强制显示右上角灰色按钮栏
+                'displaylogo': False,  # 隐藏 Plotly 图标
+                'locale': 'zh-CN',  # 按钮显示中文说明
+                'doubleClick': 'reset',  # 双击重置
                 # 显式添加 2D 的放大缩小按钮 (3D 默认自带缩放工具)
                 'modeBarButtonsToAdd': ['zoomIn2d', 'zoomOut2d'] if not is_3d else []
             }
@@ -109,18 +114,20 @@ if user_input:
                 fig = engine.generate_3d_plot(expr)
                 if fig:
                     fig.update_layout(
-                        scene=dict(dragmode='orbit'), 
-                        height=600, 
+                        scene=dict(dragmode='orbit'),
+                        height=600,
                         margin=dict(l=0, r=0, b=0, t=0)
                     )
                     st.plotly_chart(fig, use_container_width=True, theme=None, config=config)
-                
+
                 # 3D 分析
                 st.markdown("### 📝 偏导数")
                 fx, fy = sp.diff(expr, engine.x).doit(), sp.diff(expr, engine.y).doit()
                 c1, c2 = st.columns(2)
-                with c1: st.latex(f"f_x = {sp.latex(fx)}")
-                with c2: st.latex(f"f_y = {sp.latex(fy)}")
+                with c1:
+                    st.latex(f"f_x = {sp.latex(fx)}")
+                with c2:
+                    st.latex(f"f_y = {sp.latex(fy)}")
 
             else:
                 # 2D 逻辑
