@@ -9,7 +9,12 @@ import sympy as sp
 # 确保这里的 API_KEY 是有效的
 MY_API_KEY = "sk-c262ed499b0643d6bbc979f93b00ee5e"
 
-
+# 必须要有这段代码，程序才知道去读取你刚才填写的 Secrets
+if "DEEPSEEK_API_KEY" in st.secrets:
+    MY_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
+else:
+    MY_API_KEY = "sk-c262ed499b0643d6bbc979f93b00ee5e"
+    
 @st.cache_resource
 def init_resources():
     """全局单例模式初始化引擎，避免每次刷新页面重复创建对象"""
