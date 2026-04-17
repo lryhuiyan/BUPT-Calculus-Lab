@@ -73,7 +73,7 @@ st.title("🚀 基于DeepSeek V3的微积分绘图工具")
 # ✅ 针对用户的 Tips
 with st.expander("💡 快速使用指南 (点击展开/收起)", expanded=True):
     st.markdown("""
-    * **AI 绘图**：直接输入口头描述（如“x的绝对值”）或数学公式。
+    * **AI 绘图**：直接输入口头描述（如“x的平方”）或数学公式。
     * **视角控制**：
         * **平移与转动**：点击图像右上角灰色按钮栏的 **[十字箭头]** 切换平移，点击 **[旋转图标]** 切换转动。
         * **画面缩放**：使用右上角 **[+] [-] 按钮**，或双指捏合图像（电脑端滚动滑轮）。
@@ -110,7 +110,7 @@ if user_input:
                         height=600,
                         margin=dict(l=0, r=0, b=0, t=0),
                         # 🚀 关键改进：设置 uirevision 为固定值，切换模式时不再复位视角
-                        uirevision='constant' 
+                        uirevision='constant'
                     )
                     st.plotly_chart(fig, use_container_width=True, theme=None, config=config)
 
@@ -134,7 +134,7 @@ if user_input:
                 fig = engine.generate_2d_plot(items)
                 if fig:
                     fig.update_layout(
-                        dragmode='pan', 
+                        dragmode='pan',
                         height=500,
                         # 🚀 2D 同样设置 uirevision，保证缩放不被重置
                         uirevision='constant'
