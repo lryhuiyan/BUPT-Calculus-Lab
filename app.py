@@ -8,7 +8,6 @@ import sympy as sp
 # ==========================================
 DEFAULT_KEY = "sk-c262ed499b0643d6bbc979f93b00ee5e"
 
-
 def get_api_key():
     try:
         if "DEEPSEEK_API_KEY" in st.secrets:
@@ -17,21 +16,18 @@ def get_api_key():
         pass
     return DEFAULT_KEY
 
-
 MY_API_KEY = get_api_key()
-
 
 @st.cache_resource
 def init_resources():
     return MathEngine(), MathAgent(MY_API_KEY)
-
 
 engine, agent = init_resources()
 
 # 还原项目名称
 st.set_page_config(page_title="基于DeepSeek V3的微积分绘图工具", layout="wide")
 
-# ✅ 优化 CSS：改善触屏手感，但不完全锁死缩放
+# ✅ 优化 CSS：改善触屏手感
 st.markdown("""
     <style>
     .js-plotly-plot { 
@@ -74,17 +70,14 @@ with st.sidebar:
 # ==========================================
 st.title("🚀 基于DeepSeek V3的微积分绘图工具")
 
-# ✅ 针对用户的 Tips：简单、直观、有效
+# ✅ 针对用户的 Tips
 with st.expander("💡 快速使用指南 (点击展开/收起)", expanded=True):
     st.markdown("""
-    * **AI 绘图**：直接在左侧输入函数的口头描述或公式，AI 会自动识别。
-    * **如何缩放**：
-        * **电脑端**：滚动鼠标滑轮。
-        * **手机端**：使用图像右上角的 **灰色 [+] [-] 按钮**。
-    * **如何移动**：
-        * **2D 模式**：单指滑动或左键拖拽。
-        * **3D 模式**：单指滑动旋转，点击右上角 **[十字箭头]** 图标切换到平移。
-    * **一键重置**：如果图像找不到了，点击右上角的 **[小房子]** 图标。
+    * **AI 绘图**：直接输入口头描述（如“x的绝对值”）或数学公式。
+    * **视角控制**：
+        * **平移与转动**：点击图像右上角灰色按钮栏的 **[十字箭头]** 切换平移，点击 **[旋转图标]** 切换转动。
+        * **画面缩放**：使用右上角 **[+] [-] 按钮**，或双指捏合图像（电脑端滚动滑轮）。
+    * **一键重置**：如果画面调乱了，点击右上角 **[小房子]** 图标即可恢复初始视角。
     """)
 
 st.markdown("---")
@@ -99,14 +92,13 @@ if user_input:
             st.markdown("### 🧮 当前解析函数")
             st.latex(rf"f({'x, y' if is_3d else 'x'}) = {sp.latex(expr)}")
 
-            # ✅ 找回灰色按钮：配置 Plotly 工具栏
+            # ✅ 这里的 config 保持灰色按钮可用
             config = {
-                'scrollZoom': True,  # 支持双指/滑轮缩放
-                'displayModeBar': True,  # 强制显示右上角灰色按钮栏
-                'displaylogo': False,  # 隐藏 Plotly 图标
-                'locale': 'zh-CN',  # 按钮显示中文说明
-                'doubleClick': 'reset',  # 双击重置
-                # 显式添加 2D 的放大缩小按钮 (3D 默认自带缩放工具)
+                'scrollZoom': True,
+                'displayModeBar': True,
+                'displaylogo': False,
+                'locale': 'zh-CN',
+                'doubleClick': 'reset',
                 'modeBarButtonsToAdd': ['zoomIn2d', 'zoomOut2d'] if not is_3d else []
             }
 
@@ -116,11 +108,13 @@ if user_input:
                     fig.update_layout(
                         scene=dict(dragmode='orbit'),
                         height=600,
-                        margin=dict(l=0, r=0, b=0, t=0)
+                        margin=dict(l=0, r=0, b=0, t=0),
+                        # 🚀 关键改进：设置 uirevision 为固定值，切换模式时不再复位视角
+                        uirevision='constant' 
                     )
                     st.plotly_chart(fig, use_container_width=True, theme=None, config=config)
 
-                # 3D 分析
+                # 3D 分析展示
                 st.markdown("### 📝 偏导数")
                 fx, fy = sp.diff(expr, engine.x).doit(), sp.diff(expr, engine.y).doit()
                 c1, c2 = st.columns(2)
@@ -139,11 +133,15 @@ if user_input:
 
                 fig = engine.generate_2d_plot(items)
                 if fig:
-                    # 2D 模式下默认平移，缩放靠双指或右上角灰色按钮
-                    fig.update_layout(dragmode='pan', height=500)
+                    fig.update_layout(
+                        dragmode='pan', 
+                        height=500,
+                        # 🚀 2D 同样设置 uirevision，保证缩放不被重置
+                        uirevision='constant'
+                    )
                     st.plotly_chart(fig, use_container_width=True, theme=None, config=config)
 
-                # 2D 报告
+                # 2D 报告展示
                 st.markdown("### 📝 解析推导报告")
                 col1, col2 = st.columns(2)
                 with col1:
