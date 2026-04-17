@@ -4,7 +4,7 @@ from ai_logic import MathAgent
 import sympy as sp
 
 # ==========================================
-# ⚙️ 核心初始化与状态管理
+# ⚙️ 核心初始化
 # ==========================================
 DEFAULT_KEY = "sk-c262ed499b0643d6bbc979f93b00ee5e"
 
@@ -15,10 +15,6 @@ def get_api_key():
     except: pass
     return DEFAULT_KEY
 
-# 初始化缩放状态
-if 'zoom_val' not in st.session_state:
-    st.session_state.zoom_val = 1.0
-
 MY_API_KEY = get_api_key()
 
 @st.cache_resource
@@ -27,88 +23,107 @@ def init_resources():
 
 engine, agent = init_resources()
 
-st.set_page_config(page_title="微积分绘图实验室", layout="wide")
+# 还原项目名称
+st.set_page_config(page_title="基于DeepSeek V3的微积分绘图工具", layout="wide")
+
+# ✅ 优化 CSS：改善触屏手感，但不完全锁死缩放
+st.markdown("""
+    <style>
+    .js-plotly-plot { 
+        touch-action: pan-x pan-y pinch-zoom !important; 
+        user-select: none;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # ==========================================
-# 👈 侧边栏：按键控制中心
+# 👈 侧边栏：工具配置
 # ==========================================
 with st.sidebar:
-    st.header("⚙️ 控制面板")
+    st.header("⚙️ 工具配置")
     
-    # 模式切换
-    mode = st.radio("维度选择", ["一元函数 (2D)", "二元函数 (3D)"])
-    is_3d = (mode == "二元函数 (3D)")
-    
-    st.markdown("---")
-    
-    # 🚀 核心改动：缩放按键控制
-    st.subheader("🔍 视图缩放")
-    col_in, col_out, col_reset = st.columns(3)
-    with col_in:
-        if st.button("➕", help="放大"):
-            st.session_state.zoom_val *= 0.8  # 范围缩小 = 视角放大
-    with col_out:
-        if st.button("➖", help="缩小"):
-            st.session_state.zoom_val *= 1.25 # 范围扩大 = 视角缩小
-    with col_reset:
-        if st.button("🏠", help="重置"):
-            st.session_state.zoom_val = 1.0
+    if st.button("🔄 物理刷新 (清除异常缓存)"):
+        st.cache_resource.clear()
+        st.rerun()
 
     st.markdown("---")
-    user_input = st.text_input("输入函数内容", value="x**(-2/3)+y**(-2/3)" if is_3d else "x**(2/3)")
+    mode = st.radio("选择模式:", ["一元函数 (2D)", "二元函数 (3D)"])
+    is_3d = (mode == "二元函数 (3D)")
+
+    st.markdown("### ✍️ 函数输入")
+    default_val = "x**(-2/3)+y**(-2/3)" if is_3d else "x**(2/3)"
+    user_input = st.text_input(
+        "描述或输入函数:",
+        value=default_val,
+        help="支持自然语言（如：x的平方）或标准公式。"
+    )
 
     if not is_3d:
-        show_f = st.checkbox("原函数 f(x)", value=True)
+        st.subheader("🖼️ 图层显示")
+        show_f = st.checkbox("函数 f(x)", value=True)
         show_deriv = st.checkbox("导函数 f'(x)", value=True)
-        show_integral = st.checkbox("不定积分 F(x)", value=True)
+        show_integral = st.checkbox("最简原函数 F(x)", value=True)
 
 # ==========================================
 # 📊 主页面
 # ==========================================
-st.title("🚀 微积分绘图实验室")
-st.caption("📱 操作指南：使用侧边栏的 [+] [-] 按钮控制缩放，单指滑动图像进行平移或旋转。")
+st.title("🚀 基于DeepSeek V3的微积分绘图工具")
+
+# ✅ 针对用户的 Tips：简单、直观、有效
+with st.expander("💡 快速使用指南 (点击展开/收起)", expanded=True):
+    st.markdown("""
+    * **AI 绘图**：直接在左侧输入“x的平方”或公式，AI 会自动识别。
+    * **如何缩放**：
+        * **电脑端**：滚动鼠标滑轮。
+        * **手机端**：双指捏合图像，或者使用图像右上角的 **灰色 [+] [-] 按钮**。
+    * **如何移动**：
+        * **2D 模式**：单指滑动或左键拖拽。
+        * **3D 模式**：单指滑动旋转，点击右上角 **[十字箭头]** 图标切换到平移。
+    * **一键重置**：如果图像找不到了，点击右上角的 **[小房子]** 图标。
+    """)
+
+st.markdown("---")
 
 if user_input:
+    # 调用 AI 逻辑
     formula = agent.chat_to_formula(user_input, is_3d=is_3d)
 
     if formula:
         try:
             expr = engine.parse_expression(formula)
+            st.markdown("### 🧮 当前解析函数")
             st.latex(rf"f({'x, y' if is_3d else 'x'}) = {sp.latex(expr)}")
             
-            # ✅ 禁用手势缩放，由按键统一控制
+            # ✅ 找回灰色按钮：配置 Plotly 工具栏
             config = {
-                'scrollZoom': False,       # 彻底关闭滚轮和捏合缩放
-                'displayModeBar': True,
-                'displaylogo': False,
-                'locale': 'zh-CN',
-                'modeBarButtonsToRemove': ['autoScale2d', 'autoscale', 'zoom2d', 'zoom3d']
+                'scrollZoom': True,        # 支持双指/滑轮缩放
+                'displayModeBar': True,    # 强制显示右上角灰色按钮栏
+                'displaylogo': False,      # 隐藏 Plotly 图标
+                'locale': 'zh-CN',         # 按钮显示中文说明
+                'doubleClick': 'reset',    # 双击重置
+                # 显式添加 2D 的放大缩小按钮 (3D 默认自带缩放工具)
+                'modeBarButtonsToAdd': ['zoomIn2d', 'zoomOut2d'] if not is_3d else []
             }
 
             if is_3d:
                 fig = engine.generate_3d_plot(expr)
                 if fig:
-                    # 🚀 通过控制 eye 参数实现 3D 按键缩放
-                    z_factor = st.session_state.zoom_val
                     fig.update_layout(
-                        scene=dict(
-                            dragmode='orbit',
-                            camera=dict(
-                                eye=dict(x=1.25*z_factor, y=1.25*z_factor, z=1.25*z_factor)
-                            ),
-                            # 保持坐标轴范围固定，只动相机
-                            xaxis=dict(range=[-20, 20]),
-                            yaxis=dict(range=[-20, 20]),
-                            zaxis=dict(range=[-10, 25])
-                        ),
-                        height=600, margin=dict(l=0, r=0, b=0, t=0)
+                        scene=dict(dragmode='orbit'), 
+                        height=600, 
+                        margin=dict(l=0, r=0, b=0, t=0)
                     )
                     st.plotly_chart(fig, use_container_width=True, theme=None, config=config)
                 
+                # 3D 分析
+                st.markdown("### 📝 偏导数")
                 fx, fy = sp.diff(expr, engine.x).doit(), sp.diff(expr, engine.y).doit()
-                st.latex(rf"f_x = {sp.latex(fx)} \quad f_y = {sp.latex(fy)}")
+                c1, c2 = st.columns(2)
+                with c1: st.latex(f"f_x = {sp.latex(fx)}")
+                with c2: st.latex(f"f_y = {sp.latex(fy)}")
 
             else:
+                # 2D 逻辑
                 deriv, integral = engine.get_analysis_2d(expr)
                 items = []
                 if show_f: items.append((expr, "f(x)", "#1f77b4"))
@@ -117,19 +132,17 @@ if user_input:
 
                 fig = engine.generate_2d_plot(items)
                 if fig:
-                    # 🚀 通过修改 range 实现 2D 按键缩放
-                    z_factor = st.session_state.zoom_val
-                    fig.update_layout(
-                        dragmode='pan', 
-                        height=500,
-                        xaxis=dict(range=[-20*z_factor, 20*z_factor]),
-                        yaxis=dict(range=[-10*z_factor, 25*z_factor])
-                    )
+                    # 2D 模式下默认平移，缩放靠双指或右上角灰色按钮
+                    fig.update_layout(dragmode='pan', height=500)
                     st.plotly_chart(fig, use_container_width=True, theme=None, config=config)
 
+                # 2D 报告
+                st.markdown("### 📝 解析推导报告")
                 col1, col2 = st.columns(2)
-                with col1: st.latex(rf"f'(x) = {sp.latex(deriv)}")
-                with col2: st.latex(rf"F(x) = {sp.latex(integral)}")
+                with col1:
+                    st.latex(f"f'(x) = {sp.latex(deriv)}")
+                with col2:
+                    st.latex(f"F(x) = {sp.latex(integral)}")
 
         except Exception as e:
-            st.error(f"解析出错: {e}")
+            st.error(f"渲染出错: {e}")
