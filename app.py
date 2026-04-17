@@ -4,7 +4,7 @@ from ai_logic import MathAgent
 import sympy as sp
 
 # ==========================================
-# ⚙️ 核心初始化
+# ⚙️ 初始化
 # ==========================================
 DEFAULT_KEY = "sk-c262ed499b0643d6bbc979f93b00ee5e"
 
@@ -23,13 +23,15 @@ def init_resources():
 
 engine, agent = init_resources()
 
-st.set_page_config(page_title="DeepSeek 数学实验室", layout="wide")
+st.set_page_config(page_title="BUPT 微积分实验室", layout="wide")
 
-# ✅ 核心 CSS：允许双指捏合缩放(pinch-zoom)，禁止网页整体缩放，防止手势干扰
+# ✅ 强力 CSS：禁止所有浏览器默认手势，把控制权 100% 交给 Plotly 代码
+# 这样能解决缩放方向“反了”以及捏合时网页乱跑的问题
 st.markdown("""
     <style>
     .js-plotly-plot { 
-        touch-action: pinch-zoom !important; 
+        touch-action: none !important; 
+        -webkit-user-select: none; 
         user-select: none;
     }
     </style>
@@ -39,20 +41,20 @@ st.markdown("""
 # 👈 侧边栏
 # ==========================================
 with st.sidebar:
-    st.title("⚙️ 设置")
-    if st.button("🔄 刷新内核"):
+    st.header("⚙️ 控制面板")
+    if st.button("🔄 刷新引擎"):
         st.cache_resource.clear()
         st.rerun()
     
     st.markdown("---")
-    mode = st.radio("模式", ["一元函数 (2D)", "二元函数 (3D)"])
-    is_3d = (mode == "二元函数 (3D)")
+    mode = st.radio("模式选择", ["2D 平面", "3D 空间"])
+    is_3d = (mode == "3D 空间")
     
-    user_input = st.text_input("输入函数 (支持中文)", value="x**(-2/3)+y**(-2/3)" if is_3d else "x**(2/3)")
+    user_input = st.text_input("输入函数", value="x**(-2/3)+y**(-2/3)" if is_3d else "x**(2/3)")
 
     if not is_3d:
-        show_f = st.checkbox("原函数 f(x)", value=True)
-        show_deriv = st.checkbox("导函数 f'(x)", value=True)
+        show_f = st.checkbox("f(x)", value=True)
+        show_deriv = st.checkbox("导数 f'(x)", value=True)
         show_integral = st.checkbox("积分 F(x)", value=True)
 
 # ==========================================
@@ -60,12 +62,8 @@ with st.sidebar:
 # ==========================================
 st.title("🚀 微积分绘图实验室")
 
-# 简单明了的提示
-st.markdown("""
-    > **操作贴士**：📱 手机端直接用**双指捏合/张开**即可放缩。双击图像可重置视角。
-""")
-
-st.markdown("---")
+# 提示语也同步简化
+st.caption("📱 手机端：单指拖动平移/旋转，双指捏合缩放。双击重置视角。")
 
 if user_input:
     formula = agent.chat_to_formula(user_input, is_3d=is_3d)
@@ -75,28 +73,36 @@ if user_input:
             expr = engine.parse_expression(formula)
             st.latex(rf"f({'x, y' if is_3d else 'x'}) = {sp.latex(expr)}")
             
-            # 全局配置
+            # ✅ 核心配置：砍掉所有“乱套”的自动化按钮
             config = {
-                'scrollZoom': True,        # 开启捏合/滚动缩放
-                'displayModeBar': True,    # 显示工具栏（含平移/缩放切换）
+                'scrollZoom': True,
+                'displayModeBar': True,
                 'displaylogo': False,
                 'locale': 'zh-CN',
-                'doubleClick': 'reset'     # 双击复位，救命功能
+                'doubleClick': 'reset',
+                # 彻底删除 Autoscale 和各种框选工具
+                'modeBarButtonsToRemove': [
+                    'autoScale2d', 'autoscale', 'zoom2d', 'zoom3d', 
+                    'lasso2d', 'select2d', 'hoverClosestCartesian', 'hoverCompareCartesian'
+                ]
             }
 
             if is_3d:
                 fig = engine.generate_3d_plot(expr)
                 if fig:
                     fig.update_layout(
-                        # 🚀 解决缩放乱套的关键：使用 turntable 而非 orbit
-                        # 这样缩放中心会稳定在屏幕中心，不会随手指乱飘
-                        scene=dict(dragmode='turntable'), 
+                        # 🚀 3D 视角固定：单指旋转，缩放交由双指捏合
+                        scene=dict(
+                            dragmode='orbit', 
+                            xaxis_fixedrange=False,
+                            yaxis_fixedrange=False,
+                            zaxis_fixedrange=False
+                        ),
                         height=600, 
                         margin=dict(l=0, r=0, b=0, t=0)
                     )
                     st.plotly_chart(fig, use_container_width=True, theme=None, config=config)
                 
-                # 偏导分析
                 fx, fy = sp.diff(expr, engine.x).doit(), sp.diff(expr, engine.y).doit()
                 st.latex(rf"f_x = {sp.latex(fx)} \quad f_y = {sp.latex(fy)}")
 
@@ -109,11 +115,15 @@ if user_input:
 
                 fig = engine.generate_2d_plot(items)
                 if fig:
-                    # 🚀 2D 模式回归默认，双指张合即为放缩
-                    fig.update_layout(height=500)
+                    # 🚀 2D 彻底禁用框选：默认就是平移 (pan)
+                    fig.update_layout(
+                        dragmode='pan', 
+                        height=500,
+                        xaxis=dict(fixedrange=False), 
+                        yaxis=dict(fixedrange=False)
+                    )
                     st.plotly_chart(fig, use_container_width=True, theme=None, config=config)
 
-                # 解析报告
                 col1, col2 = st.columns(2)
                 with col1: st.latex(rf"f'(x) = {sp.latex(deriv)}")
                 with col2: st.latex(rf"F(x) = {sp.latex(integral)}")
