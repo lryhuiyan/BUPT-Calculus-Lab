@@ -1,203 +1,139 @@
-import sympy as sp
 import numpy as np
+import sympy as sp
 import plotly.graph_objects as go
-from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
 import re
-from functools import lru_cache
-
-
-# ==========================================
-# 🚀 性能加速层：全局编译缓存池
-# 利用 lru_cache 避免对重复输入的公式进行耗时的解析与求导
-# ==========================================
-@lru_cache(maxsize=32)
-def cached_parse(expr_str):
-    """将字符串安全解析为 SymPy 的 AST (抽象语法树)"""
-    # 清洗大模型可能残留的 Python 库前缀
-    clean_str = re.sub(r'(math|np|numpy|sp|sympy)\.', '', expr_str)
-    clean_str = clean_str.replace('\\', '').replace('cdot', '*')
-
-    # 允许隐式乘法，如将 '2x' 解析为 '2*x'
-    transformations = standard_transformations + (implicit_multiplication_application,)
-    x, y = sp.symbols('x y', real=True)
-    try:
-        return parse_expr(clean_str, transformations=transformations,
-                          global_dict={'x': x, 'y': y, 'Abs': sp.Abs, **sp.__dict__})
-    except:
-        return sp.sympify(clean_str)
-
-
-@lru_cache(maxsize=32)
-def cached_compile_2d(expr):
-    """缓存一元函数的符号求导树，解决实时输入时的严重卡顿问题"""
-    x = sp.symbols('x', real=True)
-    f_p = sp.diff(expr, x).doit()  # 一阶导
-    f_pp = sp.diff(f_p, x).doit()  # 二阶导
-    return f_p, f_pp
-
 
 class MathEngine:
-    """核心数学与物理渲染引擎"""
-
     def __init__(self):
-        # 强制声明为实数域，从底层切断 SymPy 产生无关复数解的可能
-        self.x, self.y = sp.symbols('x y', real=True)
+        self.x = sp.Symbol('x')
+        self.y = sp.Symbol('y')
 
-    def parse_expression(self, expr_str):
-        return cached_parse(expr_str)
+    def parse_expression(self, formula_str):
+        """解析字符串为 SymPy 表达式"""
+        try:
+            f_str = formula_str.replace('^', '**')
+            # 将绝对值转换为 SymPy 标准格式
+            f_str = re.sub(r'\|([^|]+)\|', r'Abs(\1)', f_str)
+            f_str = re.sub(r'\babs\(', 'Abs(', f_str)
+            return sp.parse_expr(f_str, locals={'abs': sp.Abs})
+        except Exception as e:
+            raise ValueError(f"公式解析失败: {e}")
 
-    def _fix_real_roots(self, expr):
+    def get_analysis_2d(self, expr):
+        """获取 2D 函数的导数和积分"""
+        deriv = sp.diff(expr, self.x).doit()
+        integral = sp.integrate(expr, self.x).doit()
+        return deriv, integral
+
+    def _clean_discontinuities_2d(self, x_vals, y_vals):
         """
-        [黑科技] 符号层复数根拦截器：
-        解决像 x**(2/3) 在 x<0 时产生 0+0j 导致图像丢失的问题。
-        通过符号替换，将偶分子/奇分母的分数次幂强制转化为带绝对值和符号函数的实数映射。
+        🚀 核心黑科技：智能间断点切断算法
+        用于防止 Plotly 把分段函数（如 sign(x)）或渐近线（如 1/x）连起来。
         """
-        if hasattr(expr, 'replace'):
-            # 处理对数函数，自适应 1 个参数(ln)或 2 个参数(带底数)，给真数套绝对值
-            expr = expr.replace(sp.log, lambda *args: sp.log(sp.Abs(args[0]), *args[1:]))
+        y_clean = np.array(y_vals, dtype=float)
+        
+        # 1. 过滤掉本身就是无穷大的点
+        y_clean[np.isinf(y_clean)] = np.nan
+        
+        # 计算相邻点的差值(dy)和坐标跨度(dx)
+        dy = np.diff(y_clean)
+        dx = np.diff(x_vals)
+        
+        # 2. 遍历寻找“阶跃”突变点
+        for i in range(1, len(dy) - 1):
+            # 计算当前点和前后的局部斜率
+            slope_current = np.abs(dy[i] / dx[i])
+            slope_prev = np.abs(dy[i-1] / dx[i-1])
+            slope_next = np.abs(dy[i+1] / dx[i+1])
+            
+            # 判定逻辑：
+            # (1) 绝对跳跃量 > 0.5 (过滤掉微小的数值抖动)
+            # (2) 局部斜率 > 50 (说明线非常陡峭)
+            if np.abs(dy[i]) > 0.5 and slope_current > 50:
+                # (3) 核心防误伤逻辑：只有当当前斜率远大于前后斜率时（比如大于 5 倍），
+                # 才认为是间断跳跃。这样不会误伤 x^3 或 e^x 这种本身就连续且陡峭的函数。
+                if slope_current > 5 * slope_prev or slope_current > 5 * slope_next:
+                    y_clean[i] = np.nan    # 插入 NaN，Plotly 遇到 NaN 会自动断开连线
+                    y_clean[i+1] = np.nan
+                    
+        return y_clean
 
-            # 处理幂函数
-            for p in expr.atoms(sp.Pow):
-                base, exp = p.as_base_exp()
-                if exp.is_Rational and exp.q % 2 != 0:  # 如果分母是奇数
-                    if exp.p % 2 == 0:  # 分子是偶数 (如 2/3) -> 恒正
-                        expr = expr.subs(p, sp.Abs(base) ** exp)
-                    else:  # 分子是奇数 (如 1/3) -> 保留底数符号
-                        expr = expr.subs(p, sp.sign(base) * sp.Abs(base) ** exp)
-        return expr
+    def _clean_discontinuities_3d(self, z_vals, threshold=100):
+        """3D 渐近线切断：防止曲面拉出极长的尖刺"""
+        z_clean = np.array(z_vals, dtype=float)
+        z_clean[np.isinf(z_clean)] = np.nan
+        # 超过正常显示范围的极端值直接切断，防止曲面破面
+        z_clean[np.abs(z_clean) > threshold] = np.nan
+        return z_clean
 
-    def _broadcast_scalar(self, val, target_array):
-        """标量广播补丁：防止常数函数(如 y=5 或 y'=0)运算后变成0维标量导致报错"""
-        if np.isscalar(val) or (isinstance(val, np.ndarray) and val.ndim == 0):
-            return np.full_like(target_array, float(val))
-        return val
-
-    def generate_2d_plot(self, expr_list):
-        """生成 2D 交互式图像"""
+    def generate_2d_plot(self, items):
+        """生成 2D 图像"""
         fig = go.Figure()
+        # 提高采样率，让断点的边缘更精准
+        x_vals = np.linspace(-10, 10, 2000) 
 
-        # 混合采样：1000个常规点 + 原点附近200个纳米级探针点（精准捕捉趋于无穷的趋势）
-        x_main = np.linspace(-20, 20, 1001)
-        x_micro = np.linspace(-1e-4, 1e-4, 201)
-        x_vals = np.sort(np.unique(np.concatenate([x_main, x_micro])))
-
-        for expr, label, color in expr_list:
-            # 1. 渲染主函数 y = f(x)
+        for expr, name, color in items:
+            # 传入 numpy 的 sign 和 abs 函数，供 lambdify 使用
+            f_lambdified = sp.lambdify(self.x, expr, modules=['numpy', {'sign': np.sign, 'Abs': np.abs}])
+            
             try:
-                fixed_expr = self._fix_real_roots(expr)
-
-                # 常数特判
-                if fixed_expr.is_constant():
-                    f_np = lambda x: float(fixed_expr)
-                else:
-                    f_np = sp.lambdify(self.x, fixed_expr, 'numpy')
-
-                with np.errstate(all='ignore'):  # 忽略被除数为0等警告
-                    y_p = f_np(x_vals)
-
-                y_p = self._broadcast_scalar(y_p, x_vals)
-                # 智能物理断路：如果算出无穷大(inf)，将其转为 NaN 以切断连线伪影
-                y_p[~np.isfinite(y_p)] = np.nan
+                y_vals = f_lambdified(x_vals)
+                if np.isscalar(y_vals):
+                    y_vals = np.full_like(x_vals, y_vals)
             except Exception:
-                continue  # 主图层彻底崩溃时放弃该图层
+                continue 
+            
+            # 🚀 在丢给 Plotly 画图前，先经过间断点清洗
+            y_clean = self._clean_discontinuities_2d(x_vals, y_vals)
 
-            # 2. 计算实时曲率 κ = |y''| / (1 + y'^2)^1.5
-            try:
-                f_p, f_pp = cached_compile_2d(expr)
-
-                fixed_fp = self._fix_real_roots(f_p)
-                fixed_fpp = self._fix_real_roots(f_pp)
-
-                # 将一阶和二阶导转化为 Numpy 数组
-                yp_vals = self._broadcast_scalar(
-                    float(fixed_fp) if fixed_fp.is_constant() else sp.lambdify(self.x, fixed_fp, 'numpy')(x_vals),
-                    x_vals
-                )
-                ypp_vals = self._broadcast_scalar(
-                    float(fixed_fpp) if fixed_fpp.is_constant() else sp.lambdify(self.x, fixed_fpp, 'numpy')(x_vals),
-                    x_vals
-                )
-
-                with np.errstate(all='ignore'):
-                    # 在 Numpy 级别拼接曲率，规避 SymPy 树爆炸引发的死锁
-                    k_vals = np.abs(ypp_vals) / (1 + yp_vals ** 2) ** 1.5
-                    k_vals[~np.isfinite(k_vals)] = 0  # 处理除以 0 的情况
-            except Exception:
-                k_vals = np.zeros_like(x_vals)
-
-            # 3. 将计算好的数据推入 Plotly 图层
             fig.add_trace(go.Scatter(
-                x=x_vals, y=y_p, mode='lines', name=label,
-                line=dict(color=color, width=2.5),
-                customdata=k_vals,  # 将曲率数据绑定到图层，供悬停显示
-                hovertemplate="<b>%{name}</b><br>x: %{x:.4f}<br>y: %{y:.4f}<br>κ: %{customdata:.4f}<extra></extra>",
-                connectgaps=False  # 遇到 NaN 必须断开画笔
+                x=x_vals, 
+                y=y_clean, 
+                mode='lines', 
+                name=name,
+                line=dict(color=color, width=2.5)
             ))
 
-        # 锁定白底背景、坐标范围和统一悬停交互
         fig.update_layout(
-            template="plotly_white", paper_bgcolor='white', plot_bgcolor='white',
-            xaxis=dict(range=[-20, 20], zeroline=True, gridcolor='#f0f0f0'),
-            yaxis=dict(range=[-10, 25], zeroline=True, gridcolor='#f0f0f0'),  # y轴拉高，保留"冲天"感
-            dragmode='pan', hovermode="x unified"
+            xaxis_title="x",
+            yaxis_title="y",
+            hovermode="x unified",
+            template="plotly_white",
+            margin=dict(l=20, r=20, t=20, b=20)
         )
         return fig
 
     def generate_3d_plot(self, expr):
-        """生成 3D 交互式曲面"""
-        # 混合采样：保留中心网格密度以捕捉十字撕裂带，同时控制总体积防止 WebSocket 断流
-        t_main = np.linspace(-20, 20, 81)
-        t_micro = np.linspace(-0.1, 0.1, 21)
-        t = np.sort(np.unique(np.concatenate([t_main, t_micro])))
-        X, Y = np.meshgrid(t, t)
+        """生成 3D 图像"""
+        fig = go.Figure()
+        x_vals = np.linspace(-10, 10, 100)
+        y_vals = np.linspace(-10, 10, 100)
+        X, Y = np.meshgrid(x_vals, y_vals)
 
-        fixed_expr = self._fix_real_roots(expr)
-
-        if fixed_expr.is_constant():
-            f_np = lambda x, y: float(fixed_expr)
-        else:
-            f_np = sp.lambdify((self.x, self.y), fixed_expr, 'numpy')
-
+        f_lambdified = sp.lambdify((self.x, self.y), expr, modules=['numpy', {'sign': np.sign, 'Abs': np.abs}])
+        
         try:
-            with np.errstate(all='ignore'):
-                Z = f_np(X, Y)
-                Z = self._broadcast_scalar(Z, X)
-                # 3D 采用纯数值梯度计算偏导数，极速且不易崩溃
-                GY, GX = np.gradient(Z, t, t)
-
-            # 放宽数据拦截线，允许 Z 算到 ±800，保留向天花板冲刺的数据支撑
-            Z_plot = np.where(np.abs(Z) < 800, Z, np.nan)
-
-            fig = go.Figure(data=[go.Surface(
-                x=X, y=Y, z=Z_plot,
-                customdata=np.stack((GX, GY), axis=-1),
-                colorscale=[[0, 'rgb(180, 220, 255)'], [1, 'rgb(50, 130, 210)']],
-                opacity=0.85,
-                cmin=-15, cmax=25,  # 匹配新的天花板视口
-                contours=dict(
-                    z=dict(show=True, usecolormap=True, project_z=True, highlightcolor="white"),
-                    # 深色高对比度网格，凸显曲面形变张力
-                    x=dict(show=True, color="rgba(0,0,0,0.6)", width=1.5),
-                    y=dict(show=True, color="rgba(0,0,0,0.6)", width=1.5)
-                ),
-                hovertemplate="<b>X</b>: %{x:.2f} <b>Y</b>: %{y:.2f} <b>Z</b>: %{z:.2f}<br><b>梯度</b>: [%{customdata[0]:.2f}, %{customdata[1]:.2f}]<extra></extra>"
-            )])
-
-            # 锁定正方体空间，逼迫渲染引擎产生物理截断感
-            fig.update_layout(
-                paper_bgcolor='white',
-                scene=dict(
-                    xaxis=dict(range=[-20, 20]),
-                    yaxis=dict(range=[-20, 20]),
-                    zaxis=dict(range=[-10, 25]),  # 锁定 25 视口，实现冲向云端的视觉
-                    aspectmode='cube'
-                ),
-                margin=dict(l=0, r=0, b=0, t=0)
-            )
-            return fig
-        except:
+            Z = f_lambdified(X, Y)
+            if np.isscalar(Z):
+                Z = np.full_like(X, Z)
+        except Exception:
             return None
 
-    def get_analysis_2d(self, expr):
-        """符号层解析几何：原函数的符号一阶导数与不定积分"""
-        return sp.diff(expr, self.x).doit(), sp.integrate(expr, self.x).doit()
+        # 🚀 3D 极值清洗
+        Z_clean = self._clean_discontinuities_3d(Z)
+
+        fig.add_trace(go.Surface(
+            x=X, y=Y, z=Z_clean,
+            colorscale='Blues',
+            showscale=False
+        ))
+
+        fig.update_layout(
+            scene=dict(
+                xaxis_title='X',
+                yaxis_title='Y',
+                zaxis_title='f(x, y)'
+            ),
+            margin=dict(l=0, r=0, b=0, t=0)
+        )
+        return fig
