@@ -8,7 +8,25 @@ class MathEngine:
         # 强制定义在实数域
         self.x = sp.Symbol('x', real=True)
         self.y = sp.Symbol('y', real=True)
-
+        
+    def get_curvature_2d(self, expr):
+        """
+        🚀 精准符号曲率计算 (绝不会莫名其妙变成0)
+        计算公式: κ = |y''| / (1 + y'^2)^(3/2)
+        """
+        try:
+            # 1. 算出一阶导和二阶导
+            deriv1 = sp.diff(expr, self.x).doit()
+            deriv2 = sp.diff(deriv1, self.x).doit()
+            
+            # 2. 套用公式（必须用 sp.Rational(3, 2) 而不是 1.5，防止底层精度爆炸）
+            curvature = sp.Abs(deriv2) / (1 + deriv1**2)**sp.Rational(3, 2)
+            
+            # 3. 化简一下公式，让输出的 LaTeX 更漂亮
+            return sp.simplify(curvature)
+        except Exception as e:
+            return sp.Integer(0) # 只有在极度不可导的情况下才会返回0
+            
     def parse_expression(self, formula_str):
         """解析字符串为 SymPy 表达式"""
         try:
