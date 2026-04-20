@@ -10,11 +10,13 @@ class MathEngine:
         self.y = sp.Symbol('y', real=True)
 
     def parse_expression(self, formula_str):
+        """解析字符串为 SymPy 表达式"""
         try:
             f_str = formula_str.replace('^', '**')
             f_str = re.sub(r'\|([^|]+)\|', r'Abs(\1)', f_str)
             f_str = re.sub(r'\babs\(', 'Abs(', f_str)
-            return sp.parse_expr(f_str, locals={'abs': sp.Abs})
+            # 🚀 致命修复：参数名必须是 local_dict
+            return sp.parse_expr(f_str, local_dict={'abs': sp.Abs})
         except Exception as e:
             raise ValueError(f"公式解析失败: {e}")
 
