@@ -19,21 +19,18 @@ def init_resources():
 
 engine, agent = init_resources()
 
-# 🚀 提速核心 1：恢复 AI 翻译的缓存
+# 🚀 提速核心：AI 缓存
 @st.cache_data(show_spinner=False)
 def cached_chat_to_formula(_agent, input_str, is_3d):
     return _agent.chat_to_formula(input_str, is_3d=is_3d)
 
-# 🚀 提速核心 2：保留公式解析的缓存
+# 🚀 提速核心：解析缓存
 @st.cache_data(show_spinner=False)
 def cached_parse_expression(_engine, formula):
     return _engine.parse_expression(formula)
 
 st.set_page_config(page_title="基于DeepSeek V3的微积分绘图工具", layout="wide")
 
-# ==========================================
-# 👈 侧边栏
-# ==========================================
 with st.sidebar:
     st.header("⚙️ 工具配置")
     if st.button("🔄 物理刷新 (清除异常缓存)"):
@@ -56,9 +53,6 @@ with st.sidebar:
         show_integral = st.checkbox("最简原函数 F(x)", value=True)
         show_curvature = st.checkbox("曲率 κ", value=True) 
 
-# ==========================================
-# 📊 主页面
-# ==========================================
 st.title("🚀 基于DeepSeek V3的微积分绘图工具")
 
 with st.expander("💡 快速使用指南", expanded=True):
@@ -68,7 +62,6 @@ with st.expander("💡 快速使用指南", expanded=True):
     """)
 
 if user_input:
-    # 🚀 使用缓存的 AI 请求函数，只要输入文字不变，瞬间秒回！
     formula = cached_chat_to_formula(agent, user_input, is_3d)
 
     if formula:
