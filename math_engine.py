@@ -5,8 +5,9 @@ import re
 
 class MathEngine:
     def __init__(self):
-        self.x = sp.Symbol('x')
-        self.y = sp.Symbol('y')
+        # 🚀 致命修复 1：必须声明 real=True，强迫引擎在实数域内解析绝对值
+        self.x = sp.Symbol('x', real=True)
+        self.y = sp.Symbol('y', real=True)
 
     def parse_expression(self, formula_str):
         """解析字符串为 SymPy 表达式"""
@@ -27,50 +28,42 @@ class MathEngine:
 
     def _clean_discontinuities_2d(self, x_vals, y_vals):
         """
-        🚀 2D 终极断线算法：基于中位数斜率的异常值检测
-        专门对付绝对值导数的垂直红线，以及 1/x 的垂直渐近线。
+        🚀 终极断线算法：强制切断 sign(x) 在 0 处的红线连线
         """
         y_clean = np.array(y_vals, dtype=float)
         
-        # 1. 强行截断超出合理绘图范围的极端值（防止撑爆坐标轴）
+        # 强行截断超出合理绘图范围的极端值
         y_clean[np.abs(y_clean) > 50] = np.nan
         y_clean[np.isinf(y_clean)] = np.nan
         
-        # 2. 计算斜率
         dx = np.diff(x_vals)
         dy = np.diff(y_clean)
         
         with np.errstate(divide='ignore', invalid='ignore'):
             slopes = np.abs(dy / dx)
             
-        # 获取整条曲线的基准斜率
         median_slope = np.nanmedian(slopes)
         if np.isnan(median_slope): median_slope = 0
         
-        # 3. 寻找阶跃点：局部斜率极大，且远远超出整条曲线的平均水平
+        # 寻找阶跃点：针对 sign(0)=0 导致的两步跳跃，降低 dy 阈值进行精准切割
         for i in range(len(slopes)):
-            # 条件：斜率 > 50，且达到中位数的 10 倍以上，且实际 y 跳跃明显
-            if slopes[i] > 50 and slopes[i] > 10 * median_slope and np.abs(dy[i]) > 0.5:
-                # 在阶跃点强制注入 NaN，Plotly 遇到 NaN 会直接停止连线
-                y_clean[i] = np.nan
-                y_clean[i+1] = np.nan
+            if slopes[i] > 40 and np.abs(dy[i]) > 0.1:
+                if median_slope == 0 or slopes[i] > 10 * median_slope:
+                    y_clean[i] = np.nan
+                    y_clean[i+1] = np.nan
                 
         return y_clean
 
     def _clean_discontinuities_3d(self, z_vals, threshold=25):
-        """
-        🚀 3D 防破面算法：切除奇点尖刺
-        """
+        """3D 防破面算法：切除无穷大奇点尖刺"""
         z_clean = np.array(z_vals, dtype=float)
         z_clean[np.isinf(z_clean)] = np.nan
-        # 你的 3D 图像 Z 轴大概到 25，超过这个值的数据直接挖空，不要拉尖刺
         z_clean[np.abs(z_clean) > threshold] = np.nan
         return z_clean
 
     def generate_2d_plot(self, items):
         """生成 2D 图像"""
         fig = go.Figure()
-        # 采样点增加到 2000，让阶跃点的捕捉更精准
         x_vals = np.linspace(-10, 10, 2000) 
 
         for expr, name, color in items:
@@ -80,10 +73,15 @@ class MathEngine:
                 y_vals = f_lambdified(x_vals)
                 if np.isscalar(y_vals):
                     y_vals = np.full_like(x_vals, y_vals)
+                    
+                # 🚀 致命修复 2：如果产生虚数，强行提取实部并把纯虚数置空
+                if np.iscomplexobj(y_vals):
+                    y_vals[np.iscomplex(y_vals)] = np.nan
+                    y_vals = np.real(y_vals)
+                    
             except Exception:
                 continue 
             
-            # 🔪 在喂给 Plotly 之前，强行切断间断点
             y_clean = self._clean_discontinuities_2d(x_vals, y_vals)
 
             fig.add_trace(go.Scatter(
@@ -105,7 +103,7 @@ class MathEngine:
     def generate_3d_plot(self, expr):
         """生成 3D 图像"""
         fig = go.Figure()
-        x_vals = np.linspace(-10, 10, 150) # 稍微提高 3D 精度
+        x_vals = np.linspace(-10, 10, 150)
         y_vals = np.linspace(-10, 10, 150)
         X, Y = np.meshgrid(x_vals, y_vals)
 
@@ -115,10 +113,15 @@ class MathEngine:
             Z = f_lambdified(X, Y)
             if np.isscalar(Z):
                 Z = np.full_like(X, Z)
+                
+            # 🚀 致命修复 3：3D 模式过滤虚数点（解决 x**(-2/3) 负数轴不显示的问题）
+            if np.iscomplexobj(Z):
+                Z[np.iscomplex(Z)] = np.nan
+                Z = np.real(Z)
+                
         except Exception:
             return None
 
-        # 🔪 切除 3D 无穷大尖刺
         Z_clean = self._clean_discontinuities_3d(Z)
 
         fig.add_trace(go.Surface(
