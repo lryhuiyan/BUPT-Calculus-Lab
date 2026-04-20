@@ -48,7 +48,7 @@ with st.sidebar:
         show_f = st.checkbox("函数 f(x)", value=True)
         show_deriv = st.checkbox("导函数 f'(x)", value=True)
         show_integral = st.checkbox("最简原函数 F(x)", value=True)
-        show_curvature = st.checkbox("曲率 κ", value=True) # 🚀 新增曲率开关
+        show_curvature = st.checkbox("曲率 κ", value=True) 
 
 # ==========================================
 # 📊 主页面
@@ -57,8 +57,8 @@ st.title("🚀 基于DeepSeek V3的微积分绘图工具")
 
 with st.expander("💡 快速使用指南", expanded=True):
     st.markdown("""
-    * **视角控制**：请使用图像右上角的灰色自带工具栏进行缩放、平移和旋转。
-    * **切换不复位**：系统已锁定视角，切换平移/转动时不会重置。
+    * **视角控制**：使用图像右上角的自带灰色工具栏进行缩放、平移。
+    * **切换不复位**：系统已锁定视角，切换模式时绝不会重置。
     """)
 
 if user_input:
@@ -83,6 +83,8 @@ if user_input:
                         uirevision='constant', height=700, margin=dict(l=0, r=0, b=0, t=0)
                     )
                     st.plotly_chart(fig, use_container_width=True, theme=None, config=config, key="3d_final")
+                else:
+                    st.warning("⚠️ 该 3D 函数在实数域内无有效图像，或存在不可解析的数学对象。")
 
                 fx, fy = sp.diff(expr, engine.x).doit(), sp.diff(expr, engine.y).doit()
                 st.markdown("### 📝 偏导数")
@@ -91,14 +93,13 @@ if user_input:
                 with c2: st.latex(f"f_y = {sp.latex(fy)}")
 
             else:
-                # 🚀 获取所有数据，包括曲率
                 deriv, integral, curvature = engine.get_analysis_2d(expr)
                 
                 items = []
                 if show_f: items.append((expr, "f(x)", "#1f77b4"))
                 if show_deriv: items.append((deriv, "f'(x)", "#d62728"))
                 if show_integral: items.append((integral, "F(x)", "#ff7f0e"))
-                if show_curvature: items.append((curvature, "曲率 κ", "#2ca02c")) # 绿色曲率线
+                if show_curvature: items.append((curvature, "曲率 κ", "#2ca02c")) 
 
                 fig = engine.generate_2d_plot(items)
                 if fig:
@@ -106,11 +107,19 @@ if user_input:
                         uirevision='constant', dragmode='pan', height=550
                     )
                     st.plotly_chart(fig, use_container_width=True, theme=None, config=config, key="2d_final")
+                else:
+                    st.warning("⚠️ 渲染失败。可能是该函数的积分无闭式解，且主函数超出了实数域。")
 
                 st.markdown("### 📝 解析推导报告")
                 st.latex(rf"f'(x) = {sp.latex(deriv)}")
-                st.latex(rf"F(x) = {sp.latex(integral)}")
-                st.latex(rf"\kappa = {sp.latex(curvature)}") # 打印曲率公式
+                
+                # 如果积分未求出，打印提示而非报错
+                if integral.has(sp.Integral):
+                    st.latex(r"F(x) \text{ 无初等函数解}")
+                else:
+                    st.latex(rf"F(x) = {sp.latex(integral)}")
+                    
+                st.latex(rf"\kappa = {sp.latex(curvature)}")
 
         except Exception as e:
             st.error(f"渲染出错: {e}")
