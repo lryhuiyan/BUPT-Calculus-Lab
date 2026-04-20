@@ -5,7 +5,7 @@ import re
 
 class MathEngine:
     def __init__(self):
-        # 🚀 致命修复 1：必须声明 real=True，强迫引擎在实数域内解析绝对值
+        # 强制定义在实数域
         self.x = sp.Symbol('x', real=True)
         self.y = sp.Symbol('y', real=True)
 
@@ -28,35 +28,36 @@ class MathEngine:
 
     def _clean_discontinuities_2d(self, x_vals, y_vals):
         """
-        🚀 终极断线算法：强制切断 sign(x) 在 0 处的红线连线
+        🚀 终极断线算法：暴力切断所有的渐近线与突变
         """
-        y_clean = np.array(y_vals, dtype=float)
+        y_clean = np.copy(y_vals)
         
-        # 强行截断超出合理绘图范围的极端值
-        y_clean[np.abs(y_clean) > 50] = np.nan
+        # 1. 拦截暴走数值，防止坐标轴被撑爆
+        y_clean[np.abs(y_clean) > 200] = np.nan
         y_clean[np.isinf(y_clean)] = np.nan
         
-        dx = np.diff(x_vals)
-        dy = np.diff(y_clean)
-        
-        with np.errstate(divide='ignore', invalid='ignore'):
-            slopes = np.abs(dy / dx)
+        # 2. 暴力切断垂直跳变（对付 cot(x) 等）
+        for i in range(len(y_clean) - 1):
+            y1, y2 = y_clean[i], y_clean[i+1]
+            if np.isnan(y1) or np.isnan(y2):
+                continue
+                
+            dy = np.abs(y2 - y1)
+            dx = np.abs(x_vals[i+1] - x_vals[i])
             
-        median_slope = np.nanmedian(slopes)
-        if np.isnan(median_slope): median_slope = 0
-        
-        # 寻找阶跃点：针对 sign(0)=0 导致的两步跳跃，降低 dy 阈值进行精准切割
-        for i in range(len(slopes)):
-            if slopes[i] > 40 and np.abs(dy[i]) > 0.1:
-                if median_slope == 0 or slopes[i] > 10 * median_slope:
-                    y_clean[i] = np.nan
-                    y_clean[i+1] = np.nan
+            with np.errstate(divide='ignore', invalid='ignore'):
+                slope = dy / dx
+            
+            # 突变判定：Y轴跨度大于10且极其陡峭，一律当做渐近线切断
+            if dy > 10.0 and slope > 500:
+                y_clean[i] = np.nan
+                y_clean[i+1] = np.nan
                 
         return y_clean
 
     def _clean_discontinuities_3d(self, z_vals, threshold=25):
         """3D 防破面算法：切除无穷大奇点尖刺"""
-        z_clean = np.array(z_vals, dtype=float)
+        z_clean = np.copy(z_vals)
         z_clean[np.isinf(z_clean)] = np.nan
         z_clean[np.abs(z_clean) > threshold] = np.nan
         return z_clean
@@ -64,25 +65,31 @@ class MathEngine:
     def generate_2d_plot(self, items):
         """生成 2D 图像"""
         fig = go.Figure()
-        x_vals = np.linspace(-10, 10, 2000) 
+        # 提高分辨率，让切断更精细
+        x_vals = np.linspace(-20, 20, 4000) 
 
         for expr, name, color in items:
             f_lambdified = sp.lambdify(self.x, expr, modules=['numpy', {'sign': np.sign, 'Abs': np.abs}])
             
             try:
-                y_vals = f_lambdified(x_vals)
-                if np.isscalar(y_vals):
-                    y_vals = np.full_like(x_vals, y_vals)
+                y_raw = f_lambdified(x_vals)
+                if np.isscalar(y_raw):
+                    y_raw = np.full_like(x_vals, y_raw)
                     
-                # 🚀 致命修复 2：如果产生虚数，强行提取实部并把纯虚数置空
-                if np.iscomplexobj(y_vals):
-                    y_vals[np.iscomplex(y_vals)] = np.nan
-                    y_vals = np.real(y_vals)
+                # 🚀 致命修复：强制复数拦截！
+                # 把求出的值转为复数数组，一旦发现有虚部，说明超出了实数定义域，强行注入 NaN
+                y_cplx = np.array(y_raw, dtype=complex)
+                with np.errstate(invalid='ignore'):
+                    mask_invalid = np.abs(np.imag(y_cplx)) > 1e-7
+                    
+                y_clean = np.real(y_cplx)
+                y_clean[mask_invalid] = np.nan
                     
             except Exception:
                 continue 
             
-            y_clean = self._clean_discontinuities_2d(x_vals, y_vals)
+            # 再过一遍断线逻辑
+            y_clean = self._clean_discontinuities_2d(x_vals, y_clean)
 
             fig.add_trace(go.Scatter(
                 x=x_vals, 
@@ -110,22 +117,25 @@ class MathEngine:
         f_lambdified = sp.lambdify((self.x, self.y), expr, modules=['numpy', {'sign': np.sign, 'Abs': np.abs}])
         
         try:
-            Z = f_lambdified(X, Y)
-            if np.isscalar(Z):
-                Z = np.full_like(X, Z)
+            Z_raw = f_lambdified(X, Y)
+            if np.isscalar(Z_raw):
+                Z_raw = np.full_like(X, Z_raw)
                 
-            # 🚀 致命修复 3：3D 模式过滤虚数点（解决 x**(-2/3) 负数轴不显示的问题）
-            if np.iscomplexobj(Z):
-                Z[np.iscomplex(Z)] = np.nan
-                Z = np.real(Z)
+            # 🚀 3D 同理拦截复数，解决 x^(-2/3) 的负半轴问题
+            Z_cplx = np.array(Z_raw, dtype=complex)
+            with np.errstate(invalid='ignore'):
+                mask_invalid = np.abs(np.imag(Z_cplx)) > 1e-7
+                
+            Z_clean = np.real(Z_cplx)
+            Z_clean[mask_invalid] = np.nan
                 
         except Exception:
             return None
 
-        Z_clean = self._clean_discontinuities_3d(Z)
+        Z_final = self._clean_discontinuities_3d(Z_clean)
 
         fig.add_trace(go.Surface(
-            x=X, y=Y, z=Z_clean,
+            x=X, y=Y, z=Z_final,
             colorscale='Blues',
             showscale=False
         ))
