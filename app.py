@@ -19,6 +19,12 @@ def init_resources():
 
 engine, agent = init_resources()
 
+# 🚀 提速核心 1：恢复 AI 翻译的缓存
+@st.cache_data(show_spinner=False)
+def cached_chat_to_formula(_agent, input_str, is_3d):
+    return _agent.chat_to_formula(input_str, is_3d=is_3d)
+
+# 🚀 提速核心 2：保留公式解析的缓存
 @st.cache_data(show_spinner=False)
 def cached_parse_expression(_engine, formula):
     return _engine.parse_expression(formula)
@@ -62,7 +68,8 @@ with st.expander("💡 快速使用指南", expanded=True):
     """)
 
 if user_input:
-    formula = agent.chat_to_formula(user_input, is_3d=is_3d)
+    # 🚀 使用缓存的 AI 请求函数，只要输入文字不变，瞬间秒回！
+    formula = cached_chat_to_formula(agent, user_input, is_3d)
 
     if formula:
         try:
@@ -113,7 +120,6 @@ if user_input:
                 st.markdown("### 📝 解析推导报告")
                 st.latex(rf"f'(x) = {sp.latex(deriv)}")
                 
-                # 如果积分未求出，打印提示而非报错
                 if integral.has(sp.Integral):
                     st.latex(r"F(x) \text{ 无初等函数解}")
                 else:
