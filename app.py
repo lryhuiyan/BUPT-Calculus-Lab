@@ -62,7 +62,7 @@ def looks_like_formula(text: str) -> bool:
     """Prefer direct parsing for formula-like input to avoid unnecessary model calls."""
     return bool(
         re.search(
-            r"[xypi]|sin|cos|tan|log|ln|sqrt|exp|Abs|abs|\d|\*|/|\^",
+            r"[xypi]|sin|cos|tan|log|ln|sqrt|exp|Abs|abs|绝对值|\d|\*|/|\||\^",
             text,
             flags=re.I,
         )
@@ -157,12 +157,16 @@ with st.sidebar:
 st.title("基于 DeepSeek V3 的微积分绘图 Agent")
 st.caption("支持自然语言翻译、求导、积分、梯度、曲率与交互式绘图。绘图修正版 v2：1/x 分段绘制，3D 浅蓝透明曲面。")
 
-with st.expander("使用提示", expanded=False):
+with st.expander("功能介绍与输入示例", expanded=True):
     st.markdown(
         """
-- 标准公式可以直接输入：`1/x`、`sin(x)+x**2`、`Abs(x)`、`x**2+y**2`。
-- 有渐近线的函数会自动断线，例如 `1/x`、`tan(x)`。
-- 二元函数曲面使用透明浅蓝色，曲面上叠加淡灰色曲线网格。
+这个应用用于把函数描述转成可计算的数学表达式，并自动完成微积分分析与交互式绘图。没有配置 DeepSeek API 时，也可以直接输入标准公式进行计算。
+
+- 一元函数：绘制 `f(x)`，可选显示导函数 `f'(x)` 和原函数 `F(x)`，并计算一阶导、二阶导、不定积分和曲率。
+- 二元函数：绘制 `z=f(x,y)` 的 3D 曲面，计算偏导、梯度模、高斯曲率和平均曲率。
+- 间断函数：`1/x`、`tan(x)` 等会自动在渐近线附近断开，避免画出错误的竖线。
+- 绝对值：支持 `Abs(x)`、`abs(x)`、`|x|`、`｜x｜`、`绝对值x`、`x的绝对值`。
+- 常用输入：`sin(x)+x**2`、`sqrt(x)`、`log(x)`、`1/(x**2+y**2)`、`x**2+y**2`。
 """
     )
 
@@ -279,4 +283,5 @@ if user_input:
     except Exception as exc:
         st.error(f"处理失败：{exc}")
         st.info("可以试试标准表达式，例如 `1/x`、`sin(x)+x**2`、`Abs(x)`、`x**2+y**2`。")
+
 
