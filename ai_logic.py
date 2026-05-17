@@ -50,14 +50,15 @@ class MathAgent:
             "例：'x 的平方加 sin x' -> x**2 + sin(x)\n"
             "例：'e 的负 x 平方' -> exp(-x**2)\n"
             "例：'x 和 y 的平方和' -> x**2 + y**2\n"
-            "例：'x 的绝对值' -> Abs(x)"
+            "例：'x 的绝对值' -> Abs(x)\n"
+            "例：'x加1的绝对值' -> Abs(x+1)"
         )
 
         system_content = f"""
 你是一个严格的数学表达式翻译器。把用户描述翻译成关于变量 {vars_info} 的 SymPy/Python 表达式。
 必须遵守：
 1. 只输出一个表达式，不要解释，不要 Markdown，不要写 f(x)=、y=、z=。
-2. 允许函数：sin, cos, tan, asin, acos, atan, exp, log, sqrt, Abs, sinh, cosh, tanh。
+2. 允许函数：sin, cos, tan, asin, acos, atan, exp, log, sqrt, Abs, sinh, cosh, tanh。绝对值必须输出为 Abs(...)。
 3. 幂运算必须用 **，不要用 ^。
 4. 乘法必须明确写 *，例如 2*x。
 5. 常数函数直接输出数字，例如 5。
@@ -78,3 +79,4 @@ class MathAgent:
             return self._clean_model_output(response.choices[0].message.content or "")
         except Exception:
             return None
+
