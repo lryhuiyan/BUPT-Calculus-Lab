@@ -397,24 +397,36 @@ class MathEngine:
             except Exception:
                 curvature_vals = np.full_like(x_vals, np.nan, dtype=float)
 
-            fig.add_trace(
-                go.Scatter(
-                    x=x_vals,
-                    y=y_plot,
-                    mode="lines",
-                    name=label,
-                    line=dict(color=color, width=2.5),
-                    customdata=curvature_vals,
-                    hovertemplate=(
-                        "<b>%{name}</b><br>"
-                        "x=%{x:.4f}<br>"
-                        "y=%{y:.4f}<br>"
-                        "曲率 k=%{customdata:.4f}"
-                        "<extra></extra>"
-                    ),
-                    connectgaps=False,
+            finite_mask = np.isfinite(y_plot)
+            segment_edges = np.flatnonzero(np.diff(finite_mask.astype(int)) != 0) + 1
+            segments = np.split(np.arange(len(x_vals)), segment_edges)
+            shown_legend = False
+
+            for segment in segments:
+                if segment.size < 2 or not finite_mask[segment].all():
+                    continue
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_vals[segment],
+                        y=y_plot[segment],
+                        mode="lines",
+                        name=label,
+                        line=dict(color=color, width=2.5),
+                        customdata=curvature_vals[segment],
+                        hovertemplate=(
+                            "<b>%{name}</b><br>"
+                            "x=%{x:.4f}<br>"
+                            "y=%{y:.4f}<br>"
+                            "曲率 k=%{customdata:.4f}"
+                            "<extra></extra>"
+                        ),
+                        connectgaps=False,
+                        legendgroup=label,
+                        showlegend=not shown_legend,
+                    )
                 )
-            )
+                shown_legend = True
 
             finite_y = y_plot[np.isfinite(y_plot)]
             if finite_y.size > 0:
@@ -553,4 +565,5 @@ class MathEngine:
         )
 
         return fig
+
 
