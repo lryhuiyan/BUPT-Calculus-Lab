@@ -75,6 +75,18 @@ def _replace_abs_bars(expr: str) -> str:
     return "".join(out)
 
 
+def _replace_chinese_abs(expr: str) -> str:
+    """Convert common Chinese absolute-value descriptions into Abs(...)."""
+    s = expr.strip()
+    atom = r"(?:[xy]|\d+(?:\.\d+)?|\([^()]+\))"
+
+    s = re.sub(rf"绝对值\s*({atom})", r"Abs(\1)", s)
+    s = re.sub(rf"({atom})\s*的绝对值", r"Abs(\1)", s)
+    s = re.sub(rf"abs\s*({atom})", r"Abs(\1)", s, flags=re.I)
+
+    return s
+
+
 def normalize_formula(expr_str: str) -> str:
     """Normalize user/model formula text before SymPy parsing."""
     if not expr_str:
@@ -89,6 +101,8 @@ def normalize_formula(expr_str: str) -> str:
         "×": "*",
         "÷": "/",
         "−": "-",
+        "｜": "|",
+        "∣": "|",
         "^": "**",
         "ln(": "log(",
     }
@@ -104,6 +118,7 @@ def normalize_formula(expr_str: str) -> str:
         flags=re.I,
     )
     s = s.replace("\\cdot", "*").replace("\\", "")
+    s = _replace_chinese_abs(s)
     s = _replace_abs_bars(s)
 
     return s.strip()
@@ -516,7 +531,7 @@ class MathEngine:
         )
 
         step = max(grid_size // 10, 6)
-        line_style = dict(color="rgba(0,0,0,0.72)", width=2.3)
+        line_style = dict(color="rgba(0,0,0,0.42)", width=2.0)
 
         for idx in range(0, grid_size, step):
             fig.add_trace(
@@ -568,6 +583,7 @@ class MathEngine:
         )
 
         return fig
+
 
 
 
