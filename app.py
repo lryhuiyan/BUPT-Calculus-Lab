@@ -155,7 +155,7 @@ with st.sidebar:
 
 
 st.title("基于 DeepSeek V3 的微积分绘图 Agent")
-st.caption("支持自然语言翻译、求导、积分、梯度、曲率与交互式绘图。")
+st.caption("支持自然语言翻译、求导、积分、梯度、曲率与交互式绘图。绘图修正版 v2：1/x 分段绘制，3D 浅蓝透明曲面。")
 
 with st.expander("使用提示", expanded=False):
     st.markdown(
@@ -279,3 +279,4 @@ if user_input:
     except Exception as exc:
         st.error(f"处理失败：{exc}")
         st.info("可以试试标准表达式，例如 `1/x`、`sin(x)+x**2`、`Abs(x)`、`x**2+y**2`。")
+
