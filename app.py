@@ -30,8 +30,8 @@ def get_api_key() -> str | None:
     return os.getenv("DEEPSEEK_API_KEY")
 
 
-@st.cache_resource
 def init_agent(api_key: str | None) -> MathAgent | None:
+    """Create a fresh agent so Streamlit cannot keep an outdated MathAgent instance."""
     if not api_key:
         return None
 
@@ -43,14 +43,14 @@ def cached_ai_translate(input_str: str, is_3d: bool, api_key_marker: str) -> str
     """Translate natural language to formula. The marker avoids caching the real key."""
     try:
         agent = init_agent(get_api_key())
+        if agent is None:
+            return None
+        return agent.chat_to_formula(input_str, is_3d=is_3d)
     except RuntimeError as exc:
         st.warning(str(exc))
         return None
-
-    if agent is None:
+    except Exception:
         return None
-
-    return agent.chat_to_formula(input_str, is_3d=is_3d)
 
 
 @st.cache_data(show_spinner=False)
@@ -58,14 +58,14 @@ def cached_ai_translate_equation(input_str: str, is_surface: bool, api_key_marke
     """Translate natural language to an implicit curve/surface equation."""
     try:
         agent = init_agent(get_api_key())
+        if agent is None or not hasattr(agent, "chat_to_equation"):
+            return None
+        return agent.chat_to_equation(input_str, is_surface=is_surface)
     except RuntimeError as exc:
         st.warning(str(exc))
         return None
-
-    if agent is None:
+    except Exception:
         return None
-
-    return agent.chat_to_equation(input_str, is_surface=is_surface)
 
 
 @st.cache_data(show_spinner=False)
@@ -398,5 +398,6 @@ if user_input:
     except Exception as exc:
         st.error(f"处理失败：{exc}")
         st.info("可以试试标准表达式，例如 `1/x`、`sin(x)+x**2`、`Abs(x)`、`x**2+y**2`、`x**2+y**2=4`。")
+
 
 
