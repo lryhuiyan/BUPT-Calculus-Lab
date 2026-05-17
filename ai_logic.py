@@ -80,3 +80,38 @@ class MathAgent:
         except Exception:
             return None
     def chat_to_equation(self, user_query: str, is_surface: bool = False) -> Optional[str]:
+        """Return one implicit equation such as ``x**2+y**2=4``."""
+        vars_info = "x, y, z" if is_surface else "x, y"
+        examples = (
+            "例：'半径为2的圆' -> x**2 + y**2 = 4\n"
+            "例：'以原点为圆心的单位圆' -> x**2 + y**2 = 1\n"
+            "例：'抛物线 y 等于 x 的平方' -> y = x**2\n"
+            "例：'半径为3的球面' -> x**2 + y**2 + z**2 = 9\n"
+            "例：'圆锥面' -> z**2 = x**2 + y**2"
+        )
+
+        system_content = f"""
+你是一个严格的隐式方程翻译器。把用户描述翻译成关于变量 {vars_info} 的 SymPy/Python 方程。
+必须遵守：
+1. 只输出一个方程，不要解释，不要 Markdown。
+2. 方程必须包含一个等号，例如 x**2+y**2=4；不要输出 F=0 之外的文字。
+3. 幂运算必须用 **，不要用 ^；乘法必须明确写 *。
+4. 允许函数：sin, cos, tan, exp, log, sqrt, Abs。绝对值必须输出为 Abs(...)。
+5. 平面曲线只能使用 x 和 y；空间曲面只能使用 x、y、z。
+{examples}
+""".strip()
+
+        try:
+            response = self.client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": user_query},
+                ],
+                temperature=0.0,
+                max_tokens=100,
+            )
+            return self._clean_model_output(response.choices[0].message.content or "")
+        except Exception:
+            return None
+
