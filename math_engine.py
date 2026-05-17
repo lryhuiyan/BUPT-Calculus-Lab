@@ -18,11 +18,12 @@ from sympy.parsing.sympy_parser import (
     standard_transformations,
 )
 
-X, Y = sp.symbols("x y", real=True)
+X, Y, Z = sp.symbols("x y z", real=True)
 
 _ALLOWED_FUNCS = {
     "x": X,
     "y": Y,
+    "z": Z,
     "pi": sp.pi,
     "E": sp.E,
     "e": sp.E,
@@ -191,7 +192,7 @@ class MathEngine:
     """Core symbolic calculation and Plotly rendering engine."""
 
     def __init__(self) -> None:
-        self.x, self.y = X, Y
+        self.x, self.y, self.z = X, Y, Z
 
     def parse_expression(self, expr_str: str) -> sp.Expr:
         return cached_parse(expr_str)
@@ -363,6 +364,191 @@ class MathEngine:
     def get_analysis_3d(self, expr: sp.Expr) -> dict[str, sp.Expr]:
         return cached_analysis_3d(expr)
 
+    @staticmethod
+    def _safe_float(value: sp.Expr) -> float | None:
+        try:
+            numeric = complex(sp.N(value))
+        except Exception:
+            return None
+
+        if abs(numeric.imag) > 1e-9 or not np.isfinite(numeric.real):
+            return None
+
+        return float(numeric.real)
+
+    def parse_implicit_equation(self, equation: str) -> sp.Expr:
+        """Parse an implicit curve/surface equation into F(x,y,z)=0 form."""
+        if not equation or not str(equation).strip():
+            raise ValueError("方程为空。")
+
+        raw = str(equation).strip()
+        if "=" in raw:
+            left, right = raw.split("=", 1)
+            return sp.simplify(cached_parse(left) - cached_parse(right))
+
+        return cached_parse(raw)
+
+    def validate_implicit_dimension(self, expr: sp.Expr, is_surface: bool) -> None:
+        allowed = {self.x, self.y, self.z} if is_surface else {self.x, self.y}
+        extra = set(expr.free_symbols) - allowed
+
+        if extra:
+            names = ", ".join(sorted(str(s) for s in extra))
+            raise ValueError(f"当前方程模式不支持变量：{names}")
+
+        if not is_surface and self.z in expr.free_symbols:
+            raise ValueError("一般曲线模式只能使用 x 和 y。")
+
+    def evaluate_1d_at(self, expr: sp.Expr, x_value: float) -> dict[str, float | None]:
+        derivative, second_derivative, integral, curvature = self.get_analysis_2d(expr)
+        subs = {self.x: x_value}
+
+        return {
+            "f(x)": self._safe_float(expr.subs(subs)),
+            "f'(x)": self._safe_float(derivative.subs(subs)),
+            "f''(x)": self._safe_float(second_derivative.subs(subs)),
+            "F(x)": self._safe_float(integral.subs(subs)),
+            "曲率 k": self._safe_float(curvature.subs(subs)),
+        }
+
+    def evaluate_3d_at(self, expr: sp.Expr, x_value: float, y_value: float) -> dict[str, float | None]:
+        analysis = self.get_analysis_3d(expr)
+        subs = {self.x: x_value, self.y: y_value}
+
+        return {
+            "f(x,y)": self._safe_float(expr.subs(subs)),
+            "f_x": self._safe_float(analysis["fx"].subs(subs)),
+            "f_y": self._safe_float(analysis["fy"].subs(subs)),
+            "|grad f|": self._safe_float(analysis["grad_norm"].subs(subs)),
+            "高斯曲率 K": self._safe_float(analysis["gaussian"].subs(subs)),
+            "平均曲率 H": self._safe_float(analysis["mean"].subs(subs)),
+        }
+
+    def evaluate_implicit_at(
+        self,
+        expr: sp.Expr,
+        values: dict[sp.Symbol, float],
+    ) -> dict[str, float | None]:
+        fx = sp.diff(expr, self.x).doit()
+        fy = sp.diff(expr, self.y).doit()
+        fz = sp.diff(expr, self.z).doit()
+        grad_norm = sp.sqrt(fx**2 + fy**2 + fz**2)
+
+        result: dict[str, float | None] = {
+            "F": self._safe_float(expr.subs(values)),
+            "F_x": self._safe_float(fx.subs(values)),
+            "F_y": self._safe_float(fy.subs(values)),
+        }
+
+        if self.z in values:
+            result["F_z"] = self._safe_float(fz.subs(values))
+            result["|grad F|"] = self._safe_float(grad_norm.subs(values))
+        else:
+            slope = None
+            fy_val = self._safe_float(fy.subs(values))
+            fx_val = self._safe_float(fx.subs(values))
+            if fy_val not in (None, 0.0) and fx_val is not None:
+                slope = -fx_val / fy_val
+            result["隐式斜率 dy/dx"] = slope
+
+        return result
+
+    def generate_implicit_curve_plot(
+        self,
+        expr: sp.Expr,
+        xy_min: float = -10,
+        xy_max: float = 10,
+        grid_size: int = 401,
+    ) -> go.Figure | None:
+        t = np.linspace(xy_min, xy_max, grid_size)
+        x_grid, y_grid = np.meshgrid(t, t)
+
+        try:
+            f_np = sp.lambdify(
+                (self.x, self.y),
+                self._fix_real_roots(expr),
+                modules=[{"Abs": np.abs, "sign": np.sign}, "numpy"],
+            )
+            with np.errstate(all="ignore"):
+                values = self._broadcast_scalar(f_np(x_grid, y_grid), x_grid)
+            values[~np.isfinite(values)] = np.nan
+        except Exception:
+            return None
+
+        fig = go.Figure(
+            data=[
+                go.Contour(
+                    x=t,
+                    y=t,
+                    z=values,
+                    contours=dict(start=0, end=0, size=1, coloring="lines"),
+                    line=dict(color="#1f77b4", width=3),
+                    showscale=False,
+                    hovertemplate="x=%{x:.4f}<br>y=%{y:.4f}<extra></extra>",
+                )
+            ]
+        )
+        fig.update_layout(
+            template="plotly_white",
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            xaxis=dict(range=[xy_min, xy_max], zeroline=True, scaleanchor="y", gridcolor="#f0f0f0"),
+            yaxis=dict(range=[xy_min, xy_max], zeroline=True, gridcolor="#f0f0f0"),
+            dragmode="pan",
+        )
+        return fig
+
+    def generate_implicit_surface_plot(
+        self,
+        expr: sp.Expr,
+        xyz_min: float = -5,
+        xyz_max: float = 5,
+        grid_size: int = 45,
+    ) -> go.Figure | None:
+        t = np.linspace(xyz_min, xyz_max, grid_size)
+        x_grid, y_grid, z_grid = np.meshgrid(t, t, t, indexing="ij")
+
+        try:
+            f_np = sp.lambdify(
+                (self.x, self.y, self.z),
+                self._fix_real_roots(expr),
+                modules=[{"Abs": np.abs, "sign": np.sign}, "numpy"],
+            )
+            with np.errstate(all="ignore"):
+                values = self._broadcast_scalar(f_np(x_grid, y_grid, z_grid), x_grid)
+            values[~np.isfinite(values)] = np.nan
+        except Exception:
+            return None
+
+        fig = go.Figure(
+            data=[
+                go.Isosurface(
+                    x=x_grid.flatten(),
+                    y=y_grid.flatten(),
+                    z=z_grid.flatten(),
+                    value=values.flatten(),
+                    isomin=0,
+                    isomax=0,
+                    surface_count=1,
+                    colorscale=[[0.0, "#8fd8ff"], [1.0, "#8fd8ff"]],
+                    opacity=0.55,
+                    showscale=False,
+                    caps=dict(x_show=False, y_show=False, z_show=False),
+                    hovertemplate="x=%{x:.3f}<br>y=%{y:.3f}<br>z=%{z:.3f}<extra></extra>",
+                )
+            ]
+        )
+        fig.update_layout(
+            paper_bgcolor="white",
+            scene=dict(
+                xaxis=dict(range=[xyz_min, xyz_max], backgroundcolor="white", gridcolor="rgba(220,220,220,0.25)"),
+                yaxis=dict(range=[xyz_min, xyz_max], backgroundcolor="white", gridcolor="rgba(220,220,220,0.25)"),
+                zaxis=dict(range=[xyz_min, xyz_max], backgroundcolor="white", gridcolor="rgba(220,220,220,0.25)"),
+                aspectmode="cube",
+            ),
+            margin=dict(l=0, r=0, b=0, t=0),
+        )
+        return fig
     def generate_2d_plot(
         self,
         expr_list: Iterable[tuple[sp.Expr, str, str]],
@@ -583,6 +769,7 @@ class MathEngine:
         )
 
         return fig
+
 
 
 
