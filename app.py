@@ -10,11 +10,16 @@ import sympy as sp
 from ai_logic import MathAgent
 from math_engine import MathEngine, normalize_formula
 
-st.set_page_config(page_title="基于 DeepSeek V3 的微积分绘图 Agent", layout="wide")
+st.set_page_config(page_title="微积分绘图 Agent", layout="wide")
+
+
+@st.cache_resource
+def init_engine() -> MathEngine:
+    return MathEngine()
 
 
 def get_api_key() -> str | None:
-    """优先从 Streamlit secrets 读取 API Key，其次从环境变量读取。不要把 key 写死在代码里。"""
+    """Read the DeepSeek API key from Streamlit secrets or environment variables."""
     try:
         key = st.secrets.get("DEEPSEEK_API_KEY")
         if key:
@@ -23,11 +28,6 @@ def get_api_key() -> str | None:
         pass
 
     return os.getenv("DEEPSEEK_API_KEY")
-
-
-@st.cache_resource
-def init_engine() -> MathEngine:
-    return MathEngine()
 
 
 @st.cache_resource
@@ -40,8 +40,12 @@ def init_agent(api_key: str | None) -> MathAgent | None:
 
 @st.cache_data(show_spinner=False)
 def cached_ai_translate(input_str: str, is_3d: bool, api_key_marker: str) -> str | None:
-    """自然语言转公式。api_key_marker 只用于区分缓存，不保存真实 key。"""
-    agent = init_agent(get_api_key())
+    """Translate natural language to formula. The marker avoids caching the real key."""
+    try:
+        agent = init_agent(get_api_key())
+    except RuntimeError as exc:
+        st.warning(str(exc))
+        return None
 
     if agent is None:
         return None
@@ -55,7 +59,7 @@ def cached_parse(formula: str):
 
 
 def looks_like_formula(text: str) -> bool:
-    """像公式就先直接解析，避免所有输入都调用大模型。"""
+    """Prefer direct parsing for formula-like input to avoid unnecessary model calls."""
     return bool(
         re.search(
             r"[xypi]|sin|cos|tan|log|ln|sqrt|exp|Abs|abs|\d|\*|/|\^",
@@ -66,7 +70,7 @@ def looks_like_formula(text: str) -> bool:
 
 
 def parse_or_translate(user_input: str, is_3d: bool) -> tuple[sp.Expr, str, str]:
-    """优先直接解析标准公式；失败后再调用 DeepSeek 翻译。"""
+    """Parse standard formulas first, then fall back to DeepSeek translation."""
     engine = init_engine()
     candidates: list[tuple[str, str]] = []
 
@@ -114,12 +118,12 @@ if "needs_camera_sync" not in st.session_state:
 
 
 with st.sidebar:
-    st.header("⚙️ 工具配置")
+    st.header("工具配置")
 
     if not get_api_key():
         st.warning("未检测到 DEEPSEEK_API_KEY：标准公式仍可直接计算，自然语言翻译不可用。")
 
-    if st.button("🔄 清除缓存并刷新"):
+    if st.button("清除缓存并刷新"):
         st.cache_resource.clear()
         st.cache_data.clear()
         st.session_state.zoom_val = 1.0
@@ -129,11 +133,10 @@ with st.sidebar:
     is_3d = mode == "二元函数 (3D)"
 
     default_val = "x**2 + y**2" if is_3d else "1/x"
-
     user_input = st.text_input(
         "描述或输入函数",
         value=default_val,
-        help="例：x的平方加sin x；或直接输入 sin(x)+x**2。绝对值可写 |x| 或 Abs(x)。",
+        help="例如：1/x、sin(x)+x**2、Abs(x)、x**2+y**2，也可以输入中文描述。",
     )
 
     st.markdown("### 绘图区间")
@@ -147,20 +150,19 @@ with st.sidebar:
 
         st.markdown("### 图层显示")
         show_f = st.checkbox("函数 f(x)", value=True)
-        show_deriv = st.checkbox("导函数 f'(x)", value=True)
+        show_deriv = st.checkbox("导函数 f'(x)", value=False)
         show_integral = st.checkbox("原函数 F(x)", value=False)
 
 
-st.title("🚀 基于 DeepSeek V3 的微积分绘图 Agent")
+st.title("基于 DeepSeek V3 的微积分绘图 Agent")
 st.caption("支持自然语言翻译、求导、积分、梯度、曲率与交互式绘图。")
 
-with st.expander("💡 使用指南", expanded=True):
+with st.expander("使用提示", expanded=False):
     st.markdown(
         """
-- 可以直接输入公式：`1/x`、`sin(x)+x**2`、`Abs(x)`、`x**2+y**2`。
-- 也可以输入描述：`x 的平方加 sin x`、`x 和 y 的平方和`。
-- `1/x`、`tan(x)` 这类有渐近线的函数，建议用“分标签显示”，不会被导函数把坐标轴拖崩。
-- 3D 曲面已改成透明浅蓝色，并带淡灰色曲线网格。
+- 标准公式可以直接输入：`1/x`、`sin(x)+x**2`、`Abs(x)`、`x**2+y**2`。
+- 有渐近线的函数会自动断线，例如 `1/x`、`tan(x)`。
+- 二元函数曲面使用透明浅蓝色，曲面上叠加淡灰色曲线网格。
 """
     )
 
@@ -169,13 +171,13 @@ def render_controls(is_3d: bool) -> None:
     c1, c2, c3, c4 = st.columns([1, 1, 2, 1])
 
     with c1:
-        if st.button("➕ 放大", use_container_width=True):
+        if st.button("放大", use_container_width=True):
             st.session_state.zoom_val *= 0.7
             st.session_state.needs_camera_sync = True
             st.rerun()
 
     with c2:
-        if st.button("➖ 缩小", use_container_width=True):
+        if st.button("缩小", use_container_width=True):
             st.session_state.zoom_val *= 1.4
             st.session_state.needs_camera_sync = True
             st.rerun()
@@ -183,15 +185,14 @@ def render_controls(is_3d: bool) -> None:
     with c3:
         if is_3d:
             target = "平移" if st.session_state.drag_mode == "turntable" else "旋转"
-
-            if st.button(f"🔄 切换到{target}", use_container_width=True):
+            if st.button(f"切换到{target}", use_container_width=True):
                 st.session_state.drag_mode = "pan" if st.session_state.drag_mode == "turntable" else "turntable"
                 st.rerun()
         else:
-            st.button("📍 2D 默认平移", disabled=True, use_container_width=True)
+            st.button("2D 默认平移", disabled=True, use_container_width=True)
 
     with c4:
-        if st.button("🏠 重置", use_container_width=True):
+        if st.button("重置", use_container_width=True):
             st.session_state.zoom_val = 1.0
             st.session_state.drag_mode = "turntable"
             st.session_state.needs_camera_sync = True
@@ -203,22 +204,14 @@ def render_2d_plot(items: list[tuple[sp.Expr, str, str]], x_range: int, key: str
 
     if st.session_state.needs_camera_sync:
         z = st.session_state.zoom_val
-        fig.update_layout(
-            xaxis=dict(
-                range=[-x_range * z, x_range * z],
-            )
-        )
+        fig.update_layout(xaxis=dict(range=[-x_range * z, x_range * z]))
         st.session_state.needs_camera_sync = False
 
     fig.update_layout(height=560, uirevision="constant")
-
     st.plotly_chart(
         fig,
         use_container_width=True,
-        config={
-            "displayModeBar": True,
-            "scrollZoom": True,
-        },
+        config={"displayModeBar": True, "scrollZoom": True},
         key=key,
     )
 
@@ -234,63 +227,37 @@ if user_input:
         render_controls(is_3d)
 
         if is_3d:
-            fig = engine.generate_3d_plot(
-                expr,
-                -xy_range,
-                xy_range,
-                grid_size,
-            )
+            fig = engine.generate_3d_plot(expr, -xy_range, xy_range, grid_size)
 
             if fig is None:
                 st.error("该函数暂时无法生成 3D 图像，可能存在过多奇点或数值溢出。")
             else:
                 if st.session_state.needs_camera_sync:
                     z = st.session_state.zoom_val
-                    fig.update_layout(
-                        scene_camera=dict(
-                            eye=dict(
-                                x=1.5 * z,
-                                y=1.5 * z,
-                                z=1.5 * z,
-                            )
-                        )
-                    )
+                    fig.update_layout(scene_camera=dict(eye=dict(x=1.5 * z, y=1.5 * z, z=1.5 * z)))
                     st.session_state.needs_camera_sync = False
 
-                fig.update_layout(
-                    scene_dragmode=st.session_state.drag_mode,
-                    height=720,
-                    uirevision="constant",
-                )
-
+                fig.update_layout(scene_dragmode=st.session_state.drag_mode, height=720, uirevision="constant")
                 st.plotly_chart(
                     fig,
                     use_container_width=True,
-                    config={
-                        "displayModeBar": True,
-                        "scrollZoom": True,
-                    },
+                    config={"displayModeBar": True, "scrollZoom": True},
                 )
 
             analysis = engine.get_analysis_3d(expr)
-
-            st.markdown("### 📝 二元函数分析")
+            st.markdown("### 二元函数分析")
             st.latex(rf"f_x={sp.latex(analysis['fx'])}\quad f_y={sp.latex(analysis['fy'])}")
             st.latex(rf"|\nabla f|={sp.latex(analysis['grad_norm'])}")
             st.latex(rf"K={sp.latex(analysis['gaussian'])}\quad H={sp.latex(analysis['mean'])}")
-            st.caption("K 为高斯曲率，H 为平均曲率。复杂函数的曲率表达式可能较长。")
-
+            st.caption("K 为高斯曲率，H 为平均曲率。")
         else:
             derivative, second_derivative, integral, curvature = engine.get_analysis_2d(expr)
-
             items: list[tuple[sp.Expr, str, str]] = []
 
             if show_f:
                 items.append((expr, "f(x)", "#1f77b4"))
-
             if show_deriv:
                 items.append((derivative, "f'(x)", "#d62728"))
-
             if show_integral:
                 items.append((integral, "F(x)", "#ff7f0e"))
 
@@ -300,17 +267,15 @@ if user_input:
                 render_2d_plot(items, x_range, "plot2d_all")
             else:
                 tabs = st.tabs([label for _, label, _ in items])
-
                 for tab, item in zip(tabs, items):
                     with tab:
                         render_2d_plot([item], x_range, f"plot2d_{item[1]}")
 
-            st.markdown("### 📝 一元函数分析")
+            st.markdown("### 一元函数分析")
             st.latex(rf"f'(x)={sp.latex(derivative)}")
             st.latex(rf"f''(x)={sp.latex(second_derivative)}")
             st.latex(rf"F(x)=\int f(x)\,dx={sp.latex(integral)}")
             st.latex(rf"\kappa(x)={sp.latex(curvature)}")
-
     except Exception as exc:
         st.error(f"处理失败：{exc}")
-        st.info("可以试试写成标准表达式，比如 `1/x`、`sin(x)+x**2`、`Abs(x)`、`x**2+y**2`。")
+        st.info("可以试试标准表达式，例如 `1/x`、`sin(x)+x**2`、`Abs(x)`、`x**2+y**2`。")
