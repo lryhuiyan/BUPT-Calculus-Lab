@@ -1,4 +1,4 @@
-"""Symbolic computation and plotting engine for the calculus drawing agent."""
+"""Symbolic computation and Plotly rendering engine for the calculus drawing agent."""
 from __future__ import annotations
 
 import re
@@ -25,7 +25,6 @@ _ALLOWED_FUNCS = {
     "pi": sp.pi,
     "E": sp.E,
     "e": sp.E,
-    "I": sp.I,
     "sin": sp.sin,
     "cos": sp.cos,
     "tan": sp.tan,
@@ -54,7 +53,7 @@ _TRANSFORMATIONS = standard_transformations + (
 
 
 def _replace_abs_bars(expr: str) -> str:
-    """Convert simple math bars like |x+1| into Abs(x+1)."""
+    """把 |x+1| 这类写法转成 Abs(x+1)。"""
     out: list[str] = []
     stack: list[int] = []
 
@@ -69,7 +68,6 @@ def _replace_abs_bars(expr: str) -> str:
         else:
             out.append(ch)
 
-    # 如果用户输入了不成对的 |，不要强行猜，保留原式让解析报错
     if stack:
         return expr
 
@@ -77,7 +75,7 @@ def _replace_abs_bars(expr: str) -> str:
 
 
 def normalize_formula(expr_str: str) -> str:
-    """Normalize common user/model notations before parsing."""
+    """统一清洗用户输入或 AI 输出的公式。"""
     if not expr_str:
         raise ValueError("表达式为空。")
 
@@ -112,6 +110,7 @@ def normalize_formula(expr_str: str) -> str:
 
 @lru_cache(maxsize=128)
 def cached_parse(expr_str: str) -> sp.Expr:
+    """把字符串解析为 SymPy 表达式。"""
     clean_str = normalize_formula(expr_str)
 
     try:
@@ -128,6 +127,7 @@ def cached_parse(expr_str: str) -> sp.Expr:
 
 @lru_cache(maxsize=128)
 def cached_analysis_2d(expr: sp.Expr) -> tuple[sp.Expr, sp.Expr, sp.Expr, sp.Expr]:
+    """一元函数：一阶导、二阶导、原函数、曲率。"""
     derivative = sp.diff(expr, X).doit()
     second_derivative = sp.diff(derivative, X).doit()
     integral = sp.integrate(expr, X).doit()
@@ -140,6 +140,7 @@ def cached_analysis_2d(expr: sp.Expr) -> tuple[sp.Expr, sp.Expr, sp.Expr, sp.Exp
 
 @lru_cache(maxsize=128)
 def cached_analysis_3d(expr: sp.Expr) -> dict[str, sp.Expr]:
+    """二元函数：偏导、梯度模、高斯曲率、平均曲率。"""
     fx = sp.diff(expr, X).doit()
     fy = sp.diff(expr, Y).doit()
 
@@ -149,7 +150,6 @@ def cached_analysis_3d(expr: sp.Expr) -> dict[str, sp.Expr]:
 
     grad_norm = sp.sqrt(fx**2 + fy**2)
 
-    # 曲面 z=f(x,y) 的高斯曲率和平均曲率
     gaussian = sp.simplify(
         (fxx * fyy - fxy**2) / (1 + fx**2 + fy**2) ** 2
     )
@@ -176,7 +176,7 @@ def cached_analysis_3d(expr: sp.Expr) -> dict[str, sp.Expr]:
 
 
 class MathEngine:
-    """Core symbolic math and Plotly rendering engine."""
+    """核心数学计算与绘图引擎。"""
 
     def __init__(self) -> None:
         self.x, self.y = X, Y
@@ -184,12 +184,9 @@ class MathEngine:
     def parse_expression(self, expr_str: str) -> sp.Expr:
         return cached_parse(expr_str)
 
-    def variables_in(self, expr: sp.Expr) -> set[sp.Symbol]:
-        return set(expr.free_symbols)
-
     def validate_dimension(self, expr: sp.Expr, is_3d: bool) -> None:
         allowed = {self.x, self.y} if is_3d else {self.x}
-        extra = self.variables_in(expr) - allowed
+        extra = set(expr.free_symbols) - allowed
 
         if extra:
             names = ", ".join(sorted(str(s) for s in extra))
@@ -199,7 +196,7 @@ class MathEngine:
             raise ValueError("一元函数模式只能使用变量 x。")
 
     def _fix_real_roots(self, expr: sp.Expr) -> sp.Expr:
-        """Keep odd-denominator rational powers real on negative inputs where possible."""
+        """修正部分分数幂在负数区域的实数显示问题，并把 log(x) 显示为 log(abs(x))。"""
         if not hasattr(expr, "atoms"):
             return expr
 
@@ -230,6 +227,27 @@ class MathEngine:
 
         return arr.astype(float)
 
+    @staticmethod
+    def _break_large_jumps(y_vals: np.ndarray, factor: float = 8.0) -> np.ndarray:
+        """遇到函数突变时断开连线，避免渐近线附近出现假竖线。"""
+        y = y_vals.copy()
+        finite = np.isfinite(y)
+
+        if finite.sum() < 4:
+            return y
+
+        diffs = np.abs(np.diff(y))
+        finite_diffs = diffs[np.isfinite(diffs)]
+
+        if finite_diffs.size == 0:
+            return y
+
+        threshold = max(np.nanmedian(finite_diffs) * factor, 50.0)
+        jump_idx = np.where(diffs > threshold)[0] + 1
+        y[jump_idx] = np.nan
+
+        return y
+
     def _eval_1d(self, expr: sp.Expr, x_vals: np.ndarray) -> np.ndarray:
         fixed = self._fix_real_roots(expr)
 
@@ -252,13 +270,13 @@ class MathEngine:
     def _eval_2d(
         self,
         expr: sp.Expr,
-        X_grid: np.ndarray,
-        Y_grid: np.ndarray,
+        x_grid: np.ndarray,
+        y_grid: np.ndarray,
     ) -> np.ndarray:
         fixed = self._fix_real_roots(expr)
 
         if fixed.is_constant():
-            return np.full_like(X_grid, float(fixed), dtype=float)
+            return np.full_like(x_grid, float(fixed), dtype=float)
 
         f_np = sp.lambdify(
             (self.x, self.y),
@@ -267,32 +285,11 @@ class MathEngine:
         )
 
         with np.errstate(all="ignore"):
-            Z = self._broadcast_scalar(f_np(X_grid, Y_grid), X_grid)
+            z = self._broadcast_scalar(f_np(x_grid, y_grid), x_grid)
 
-        Z[~np.isfinite(Z)] = np.nan
+        z[~np.isfinite(z)] = np.nan
 
-        return Z
-
-    @staticmethod
-    def _break_large_jumps(y_vals: np.ndarray, factor: float = 8.0) -> np.ndarray:
-        """Insert NaNs where neighboring samples jump too hard, avoiding fake vertical lines."""
-        y = y_vals.copy()
-        finite = np.isfinite(y)
-
-        if finite.sum() < 4:
-            return y
-
-        diffs = np.abs(np.diff(y))
-        finite_diffs = diffs[np.isfinite(diffs)]
-
-        if finite_diffs.size == 0:
-            return y
-
-        threshold = max(np.nanmedian(finite_diffs) * factor, 50.0)
-        jump_idx = np.where(diffs > threshold)[0] + 1
-        y[jump_idx] = np.nan
-
-        return y
+        return z
 
     def get_analysis_2d(self, expr: sp.Expr) -> tuple[sp.Expr, sp.Expr, sp.Expr, sp.Expr]:
         return cached_analysis_2d(expr)
@@ -305,16 +302,25 @@ class MathEngine:
         expr_list: Iterable[tuple[sp.Expr, str, str]],
         x_min: float = -10,
         x_max: float = 10,
+        clip_value: float = 80,
     ) -> go.Figure:
+        """生成 2D 图像。对奇点/爆炸值做裁剪，避免 1/x 这类函数把 y 轴拉崩。"""
         fig = go.Figure()
 
         x_main = np.linspace(x_min, x_max, 1601)
         x_micro = np.linspace(-1e-4, 1e-4, 301)
         x_vals = np.sort(np.unique(np.concatenate([x_main, x_micro])))
 
+        plot_arrays: list[np.ndarray] = []
+
         for expr, label, color in expr_list:
             try:
-                y_vals = self._break_large_jumps(self._eval_1d(expr, x_vals))
+                y_vals = self._eval_1d(expr, x_vals)
+                y_vals = self._break_large_jumps(y_vals)
+
+                y_plot = y_vals.copy()
+                y_plot[np.abs(y_plot) > clip_value] = np.nan
+
             except Exception:
                 continue
 
@@ -334,10 +340,10 @@ class MathEngine:
             fig.add_trace(
                 go.Scatter(
                     x=x_vals,
-                    y=y_vals,
+                    y=y_plot,
                     mode="lines",
                     name=label,
-                    line=dict(color=color, width=2.4),
+                    line=dict(color=color, width=2.5),
                     customdata=curvature_vals,
                     hovertemplate=(
                         "<b>%{name}</b><br>"
@@ -350,6 +356,23 @@ class MathEngine:
                 )
             )
 
+            finite_y = y_plot[np.isfinite(y_plot)]
+            if finite_y.size > 0:
+                plot_arrays.append(finite_y)
+
+        if plot_arrays:
+            all_y = np.concatenate(plot_arrays)
+            y_low, y_high = np.percentile(all_y, [2, 98])
+
+            if abs(y_high - y_low) < 1e-6:
+                y_low -= 1
+                y_high += 1
+
+            pad = max((y_high - y_low) * 0.15, 1.0)
+            y_range = [float(y_low - pad), float(y_high + pad)]
+        else:
+            y_range = [-10, 10]
+
         fig.update_layout(
             template="plotly_white",
             paper_bgcolor="white",
@@ -357,11 +380,12 @@ class MathEngine:
             xaxis=dict(
                 range=[x_min, x_max],
                 zeroline=True,
-                gridcolor="#eeeeee",
+                gridcolor="#f0f0f0",
             ),
             yaxis=dict(
+                range=y_range,
                 zeroline=True,
-                gridcolor="#eeeeee",
+                gridcolor="#f0f0f0",
             ),
             dragmode="pan",
             hovermode="x unified",
@@ -383,16 +407,23 @@ class MathEngine:
         xy_max: float = 8,
         grid_size: int = 101,
     ) -> go.Figure | None:
+        """生成 3D 图像：透明浅蓝色曲面 + 淡灰色曲线网格。"""
         t = np.linspace(xy_min, xy_max, grid_size)
-        X_grid, Y_grid = np.meshgrid(t, t)
+        x_grid, y_grid = np.meshgrid(t, t)
 
         try:
-            Z = self._eval_2d(expr, X_grid, Y_grid)
-            Z_plot = np.where(np.abs(Z) < 500, Z, np.nan)
+            z = self._eval_2d(expr, x_grid, y_grid)
+            z_plot = np.where(np.abs(z) < 200, z, np.nan)
 
-            GY, GX = np.gradient(Z, t, t)
-            grad_norm = np.sqrt(GX**2 + GY**2)
-            custom = np.stack((GX, GY, grad_norm), axis=-1)
+            z_for_grad = np.nan_to_num(
+                z,
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
+            gy, gx = np.gradient(z_for_grad, t, t)
+            grad_norm = np.sqrt(gx**2 + gy**2)
+            custom = np.stack((gx, gy, grad_norm), axis=-1)
 
         except Exception:
             return None
@@ -400,26 +431,52 @@ class MathEngine:
         fig = go.Figure(
             data=[
                 go.Surface(
-                    x=X_grid,
-                    y=Y_grid,
-                    z=Z_plot,
+                    x=x_grid,
+                    y=y_grid,
+                    z=z_plot,
                     customdata=custom,
-                    colorscale="Viridis",
-                    opacity=0.92,
+                    colorscale=[
+                        [0.0, "rgba(210,235,248,0.30)"],
+                        [0.5, "rgba(173,216,230,0.45)"],
+                        [1.0, "rgba(120,180,220,0.65)"],
+                    ],
+                    showscale=False,
+                    opacity=0.58,
+                    lighting=dict(
+                        ambient=0.88,
+                        diffuse=0.55,
+                        specular=0.10,
+                        roughness=0.95,
+                        fresnel=0.05,
+                    ),
                     contours=dict(
+                        x=dict(
+                            show=True,
+                            color="rgba(160,160,160,0.35)",
+                            width=1.0,
+                            highlight=False,
+                        ),
+                        y=dict(
+                            show=True,
+                            color="rgba(160,160,160,0.35)",
+                            width=1.0,
+                            highlight=False,
+                        ),
                         z=dict(
                             show=True,
-                            usecolormap=True,
-                            project_z=True,
-                        )
+                            color="rgba(170,170,170,0.30)",
+                            width=1.0,
+                            highlight=False,
+                            usecolormap=False,
+                        ),
                     ),
                     hovertemplate=(
-                        "x=%{x:.3f}<br>"
-                        "y=%{y:.3f}<br>"
-                        "z=%{z:.3f}"
-                        "<br>fx≈%{customdata[0]:.3f}"
-                        "<br>fy≈%{customdata[1]:.3f}"
-                        "<br>|∇f|≈%{customdata[2]:.3f}"
+                        "<b>x</b>: %{x:.2f}<br>"
+                        "<b>y</b>: %{y:.2f}<br>"
+                        "<b>z</b>: %{z:.2f}<br>"
+                        "<b>fx≈</b> %{customdata[0]:.2f}<br>"
+                        "<b>fy≈</b> %{customdata[1]:.2f}<br>"
+                        "<b>|∇f|≈</b> %{customdata[2]:.2f}"
                         "<extra></extra>"
                     ),
                 )
@@ -429,9 +486,23 @@ class MathEngine:
         fig.update_layout(
             paper_bgcolor="white",
             scene=dict(
-                xaxis=dict(range=[xy_min, xy_max]),
-                yaxis=dict(range=[xy_min, xy_max]),
-                zaxis=dict(title="z"),
+                xaxis=dict(
+                    range=[xy_min, xy_max],
+                    backgroundcolor="white",
+                    gridcolor="rgba(220,220,220,0.25)",
+                    zerolinecolor="rgba(180,180,180,0.35)",
+                ),
+                yaxis=dict(
+                    range=[xy_min, xy_max],
+                    backgroundcolor="white",
+                    gridcolor="rgba(220,220,220,0.25)",
+                    zerolinecolor="rgba(180,180,180,0.35)",
+                ),
+                zaxis=dict(
+                    backgroundcolor="white",
+                    gridcolor="rgba(220,220,220,0.20)",
+                    zerolinecolor="rgba(180,180,180,0.35)",
+                ),
                 aspectmode="cube",
             ),
             margin=dict(l=0, r=0, b=0, t=0),
