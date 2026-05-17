@@ -490,9 +490,12 @@ class MathEngine:
                 y=y_grid,
                 z=z_plot,
                 customdata=custom,
-                colorscale=[[0.0, "#cfefff"], [1.0, "#cfefff"]],
+                surfacecolor=np.zeros_like(z_plot, dtype=float),
+                colorscale=[[0.0, "#8fd8ff"], [1.0, "#8fd8ff"]],
+                cmin=0,
+                cmax=1,
                 showscale=False,
-                opacity=0.46,
+                opacity=0.58,
                 lighting=dict(
                     ambient=0.95,
                     diffuse=0.45,
@@ -513,7 +516,7 @@ class MathEngine:
         )
 
         step = max(grid_size // 10, 6)
-        line_style = dict(color="rgba(150,150,150,0.42)", width=2)
+        line_style = dict(color="rgba(0,0,0,0.72)", width=2.3)
 
         for idx in range(0, grid_size, step):
             fig.add_trace(
@@ -565,5 +568,7 @@ class MathEngine:
         )
 
         return fig
+
+
 
 
