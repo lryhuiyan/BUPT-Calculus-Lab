@@ -11,7 +11,7 @@ from typing import Optional
 
 _CODE_FENCE_RE = re.compile(r"```(?:python|py|text)?|```", re.IGNORECASE)
 _PREFIX_RE = re.compile(r"^(?:[zfgy]\s*=|f\s*\([^)]*\)\s*=|z\s*\([^)]*\)\s*=)", re.IGNORECASE)
-_ALLOWED_CHARS_RE = re.compile(r"[^0-9a-zA-Z_+\-*/^().,| ]")
+_ALLOWED_CHARS_RE = re.compile(r"[^0-9a-zA-Z_+\-*/^().,|= ]")
 
 
 class MathAgent:
@@ -79,4 +79,4 @@ class MathAgent:
             return self._clean_model_output(response.choices[0].message.content or "")
         except Exception:
             return None
-
+    def chat_to_equation(self, user_query: str, is_surface: bool = False) -> Optional[str]:
