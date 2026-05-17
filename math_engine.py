@@ -453,6 +453,75 @@ class MathEngine:
 
         return result
 
+    @staticmethod
+    def _zero_contour_segments(
+        a_axis: np.ndarray,
+        b_axis: np.ndarray,
+        values: np.ndarray,
+    ) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+        """Extract approximate F=0 line segments from a 2D scalar field."""
+        segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
+
+        def interp(p0, p1, v0, v1):
+            if not np.isfinite(v0) or not np.isfinite(v1):
+                return None
+            if abs(v0 - v1) < 1e-12:
+                t = 0.5
+            else:
+                t = float(-v0 / (v1 - v0))
+            if t < -1e-9 or t > 1 + 1e-9:
+                return None
+            t = min(max(t, 0.0), 1.0)
+            return (p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t)
+
+        for i in range(len(a_axis) - 1):
+            for j in range(len(b_axis) - 1):
+                a0, a1 = float(a_axis[i]), float(a_axis[i + 1])
+                b0, b1 = float(b_axis[j]), float(b_axis[j + 1])
+                v00 = values[i, j]
+                v10 = values[i + 1, j]
+                v11 = values[i + 1, j + 1]
+                v01 = values[i, j + 1]
+
+                if not np.all(np.isfinite([v00, v10, v11, v01])):
+                    continue
+
+                if np.nanmin([v00, v10, v11, v01]) > 0 or np.nanmax([v00, v10, v11, v01]) < 0:
+                    continue
+
+                pts = []
+                edges = [
+                    ((a0, b0), (a1, b0), v00, v10),
+                    ((a1, b0), (a1, b1), v10, v11),
+                    ((a1, b1), (a0, b1), v11, v01),
+                    ((a0, b1), (a0, b0), v01, v00),
+                ]
+                for p0, p1, va, vb in edges:
+                    if va == 0:
+                        pts.append(p0)
+                    if va * vb < 0:
+                        point = interp(p0, p1, va, vb)
+                        if point is not None:
+                            pts.append(point)
+
+                unique = []
+                for point in pts:
+                    if not any(abs(point[0] - old[0]) < 1e-9 and abs(point[1] - old[1]) < 1e-9 for old in unique):
+                        unique.append(point)
+
+                if len(unique) == 2:
+                    segments.append((unique[0], unique[1]))
+                elif len(unique) >= 4:
+                    segments.append((unique[0], unique[1]))
+                    segments.append((unique[2], unique[3]))
+
+        return segments
+
+    @staticmethod
+    def _append_line(xs: list[float | None], ys: list[float | None], zs: list[float | None], p0, p1) -> None:
+        xs.extend([p0[0], p1[0], None])
+        ys.extend([p0[1], p1[1], None])
+        zs.extend([p0[2], p1[2], None])
     def generate_implicit_curve_plot(
         self,
         expr: sp.Expr,
@@ -482,7 +551,7 @@ class MathEngine:
                     y=t,
                     z=values,
                     contours=dict(start=0, end=0, size=1, coloring="lines"),
-                    line=dict(color="#1f77b4", width=3),
+                    line=dict(color="rgba(0,0,0,0.82)", width=3.2),
                     showscale=False,
                     hovertemplate="x=%{x:.4f}<br>y=%{y:.4f}<extra></extra>",
                 )
@@ -538,6 +607,38 @@ class MathEngine:
                 )
             ]
         )
+        contour_idx = np.linspace(0, grid_size - 1, min(9, grid_size), dtype=int)
+        line_style = dict(color="rgba(0,0,0,0.48)", width=2.0)
+        xs: list[float | None] = []
+        ys: list[float | None] = []
+        zs: list[float | None] = []
+
+        for idx in contour_idx:
+            fixed_z = float(t[idx])
+            for p0, p1 in self._zero_contour_segments(t, t, values[:, :, idx]):
+                self._append_line(xs, ys, zs, (p0[0], p0[1], fixed_z), (p1[0], p1[1], fixed_z))
+
+            fixed_x = float(t[idx])
+            for p0, p1 in self._zero_contour_segments(t, t, values[idx, :, :]):
+                self._append_line(xs, ys, zs, (fixed_x, p0[0], p0[1]), (fixed_x, p1[0], p1[1]))
+
+            fixed_y = float(t[idx])
+            for p0, p1 in self._zero_contour_segments(t, t, values[:, idx, :]):
+                self._append_line(xs, ys, zs, (p0[0], fixed_y, p0[1]), (p1[0], fixed_y, p1[1]))
+
+        if xs:
+            fig.add_trace(
+                go.Scatter3d(
+                    x=xs,
+                    y=ys,
+                    z=zs,
+                    mode="lines",
+                    line=line_style,
+                    hoverinfo="skip",
+                    showlegend=False,
+                )
+            )
+
         fig.update_layout(
             paper_bgcolor="white",
             scene=dict(
@@ -769,6 +870,8 @@ class MathEngine:
         )
 
         return fig
+
+
 
 
 
