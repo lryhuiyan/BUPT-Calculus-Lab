@@ -54,6 +54,21 @@ def cached_ai_translate(input_str: str, is_3d: bool, api_key_marker: str) -> str
 
 
 @st.cache_data(show_spinner=False)
+def cached_ai_translate_equation(input_str: str, is_surface: bool, api_key_marker: str) -> str | None:
+    """Translate natural language to an implicit curve/surface equation."""
+    try:
+        agent = init_agent(get_api_key())
+    except RuntimeError as exc:
+        st.warning(str(exc))
+        return None
+
+    if agent is None:
+        return None
+
+    return agent.chat_to_equation(input_str, is_surface=is_surface)
+
+
+@st.cache_data(show_spinner=False)
 def cached_parse(formula: str):
     return init_engine().parse_expression(formula)
 
@@ -103,6 +118,41 @@ def parse_or_translate(user_input: str, is_3d: bool) -> tuple[sp.Expr, str, str]
         raise ValueError("；".join(errors))
 
     raise ValueError("没有得到可解析的公式。")
+
+def parse_implicit_or_translate(user_input: str, is_surface: bool) -> tuple[sp.Expr, str, str]:
+    """Parse implicit equations first, then fall back to DeepSeek equation translation."""
+    engine = init_engine()
+    candidates: list[tuple[str, str]] = []
+
+    if looks_like_formula(user_input):
+        candidates.append(("直接解析", user_input))
+
+    key = get_api_key()
+    translated = None
+
+    if key:
+        translated = cached_ai_translate_equation(user_input, is_surface, "has-key")
+
+    if translated:
+        candidates.append(("DeepSeek 方程翻译", translated))
+
+    errors: list[str] = []
+
+    for source, equation in candidates:
+        try:
+            expr = engine.parse_implicit_equation(equation)
+            engine.validate_implicit_dimension(expr, is_surface)
+            return expr, equation, source
+        except Exception as exc:
+            errors.append(f"{source}: {exc}")
+
+    if not key and not candidates:
+        raise ValueError("这看起来像自然语言方程描述，但没有配置 DEEPSEEK_API_KEY，无法调用模型翻译。")
+
+    if errors:
+        raise ValueError("；".join(errors))
+
+    raise ValueError("没有得到可解析的一般方程。")
 
 
 def fmt(value: float | None) -> str:
@@ -201,7 +251,7 @@ with st.expander("功能介绍与输入示例", expanded=True):
 
 - 一元函数：绘制 `f(x)`，可选显示导函数 `f'(x)` 和原函数 `F(x)`，计算一阶导、二阶导、不定积分、曲率，并在指定 `x` 处返回对应数值。
 - 二元函数：绘制 `z=f(x,y)` 的 3D 曲面，计算偏导、梯度模、高斯曲率、平均曲率，并在指定 `(x,y)` 处返回函数值和曲率等数值。
-- 一般曲线/曲面方程：支持 `F(x,y)=0` 平面曲线和 `F(x,y,z)=0` 空间曲面，例如 `x**2+y**2=4`、`x**2+y**2+z**2=9`。
+- 一般曲线/曲面方程：支持 `F(x,y)=0` 平面曲线和 `F(x,y,z)=0` 空间曲面，例如 `x**2+y**2=4`、`x**2+y**2+z**2=9`；配置 DeepSeek 后也可以输入“半径为 3 的球面”“单位圆”。
 - 间断函数：`1/x`、`tan(x)` 等会自动在渐近线附近断开，避免画出错误的竖线。
 - 绝对值：支持 `Abs(x)`、`abs(x)`、`|x|`、`｜x｜`、`绝对值x`、`x的绝对值`。
 """
@@ -260,9 +310,8 @@ def render_2d_plot(items: list[tuple[sp.Expr, str, str]], x_range: int, key: str
 if user_input:
     try:
         if is_implicit:
-            expr = engine.parse_implicit_equation(user_input)
-            engine.validate_implicit_dimension(expr, is_surface)
-            st.success(f"隐式方程：`{sp.sstr(expr)} = 0`")
+            expr, equation_text, source = parse_implicit_or_translate(user_input, is_surface)
+            st.success(f"解析来源：{source}；输入/翻译方程：`{equation_text}`；内部形式：`{sp.sstr(expr)} = 0`")
             st.latex(rf"F= {sp.latex(expr)} = 0")
             st.markdown("---")
 
@@ -349,4 +398,5 @@ if user_input:
     except Exception as exc:
         st.error(f"处理失败：{exc}")
         st.info("可以试试标准表达式，例如 `1/x`、`sin(x)+x**2`、`Abs(x)`、`x**2+y**2`、`x**2+y**2=4`。")
+
 
