@@ -8,6 +8,7 @@ from typing import Iterable
 import numpy as np
 import plotly.graph_objects as go
 import sympy as sp
+from sympy.calculus.util import continuous_domain
 from sympy.parsing.sympy_parser import (
     convert_xor,
     function_exponentiation,
@@ -53,7 +54,7 @@ _TRANSFORMATIONS = standard_transformations + (
 
 
 def _replace_abs_bars(expr: str) -> str:
-    """把 |x+1| 这类写法转成 Abs(x+1)。"""
+    """Convert |x+1| style input into Abs(x+1)."""
     out: list[str] = []
     stack: list[int] = []
 
@@ -75,7 +76,7 @@ def _replace_abs_bars(expr: str) -> str:
 
 
 def normalize_formula(expr_str: str) -> str:
-    """统一清洗用户输入或 AI 输出的公式。"""
+    """Normalize user/model formula text before SymPy parsing."""
     if not expr_str:
         raise ValueError("表达式为空。")
 
@@ -110,7 +111,7 @@ def normalize_formula(expr_str: str) -> str:
 
 @lru_cache(maxsize=128)
 def cached_parse(expr_str: str) -> sp.Expr:
-    """把字符串解析为 SymPy 表达式。"""
+    """Parse a string into a SymPy expression."""
     clean_str = normalize_formula(expr_str)
 
     try:
@@ -127,7 +128,7 @@ def cached_parse(expr_str: str) -> sp.Expr:
 
 @lru_cache(maxsize=128)
 def cached_analysis_2d(expr: sp.Expr) -> tuple[sp.Expr, sp.Expr, sp.Expr, sp.Expr]:
-    """一元函数：一阶导、二阶导、原函数、曲率。"""
+    """For y=f(x): first derivative, second derivative, integral, curvature."""
     derivative = sp.diff(expr, X).doit()
     second_derivative = sp.diff(derivative, X).doit()
     integral = sp.integrate(expr, X).doit()
@@ -140,7 +141,7 @@ def cached_analysis_2d(expr: sp.Expr) -> tuple[sp.Expr, sp.Expr, sp.Expr, sp.Exp
 
 @lru_cache(maxsize=128)
 def cached_analysis_3d(expr: sp.Expr) -> dict[str, sp.Expr]:
-    """二元函数：偏导、梯度模、高斯曲率、平均曲率。"""
+    """For z=f(x,y): partials, gradient norm, Gaussian and mean curvature."""
     fx = sp.diff(expr, X).doit()
     fy = sp.diff(expr, Y).doit()
 
@@ -149,11 +150,7 @@ def cached_analysis_3d(expr: sp.Expr) -> dict[str, sp.Expr]:
     fyy = sp.diff(fy, Y).doit()
 
     grad_norm = sp.sqrt(fx**2 + fy**2)
-
-    gaussian = sp.simplify(
-        (fxx * fyy - fxy**2) / (1 + fx**2 + fy**2) ** 2
-    )
-
+    gaussian = sp.simplify((fxx * fyy - fxy**2) / (1 + fx**2 + fy**2) ** 2)
     mean = sp.simplify(
         (
             (1 + fy**2) * fxx
@@ -176,7 +173,7 @@ def cached_analysis_3d(expr: sp.Expr) -> dict[str, sp.Expr]:
 
 
 class MathEngine:
-    """核心数学计算与绘图引擎。"""
+    """Core symbolic calculation and Plotly rendering engine."""
 
     def __init__(self) -> None:
         self.x, self.y = X, Y
@@ -196,14 +193,11 @@ class MathEngine:
             raise ValueError("一元函数模式只能使用变量 x。")
 
     def _fix_real_roots(self, expr: sp.Expr) -> sp.Expr:
-        """修正部分分数幂在负数区域的实数显示问题，并把 log(x) 显示为 log(abs(x))。"""
+        """Make odd rational powers and log render nicely on real-valued plots."""
         if not hasattr(expr, "atoms"):
             return expr
 
-        fixed = expr.replace(
-            sp.log,
-            lambda *args: sp.log(sp.Abs(args[0]), *args[1:]),
-        )
+        fixed = expr.replace(sp.log, lambda *args: sp.log(sp.Abs(args[0]), *args[1:]))
 
         for p in list(fixed.atoms(sp.Pow)):
             base, exp = p.as_base_exp()
@@ -229,7 +223,7 @@ class MathEngine:
 
     @staticmethod
     def _break_large_jumps(y_vals: np.ndarray, factor: float = 8.0) -> np.ndarray:
-        """遇到函数突变时断开连线，避免渐近线附近出现假竖线。"""
+        """Break lines around sudden numeric jumps to avoid fake vertical segments."""
         y = y_vals.copy()
         finite = np.isfinite(y)
 
@@ -247,6 +241,63 @@ class MathEngine:
         y[jump_idx] = np.nan
 
         return y
+
+    @staticmethod
+    def _set_nan_near_breaks(
+        x_vals: np.ndarray,
+        y_vals: np.ndarray,
+        break_points: Iterable[float],
+    ) -> np.ndarray:
+        y = y_vals.copy()
+
+        for point in break_points:
+            spacing = np.min(np.abs(x_vals - point))
+            width = max(spacing * 1.5, 1e-8)
+            y[np.abs(x_vals - point) <= width] = np.nan
+
+        return y
+
+    def _domain_break_points(
+        self,
+        expr: sp.Expr,
+        x_min: float,
+        x_max: float,
+    ) -> list[float]:
+        """Find likely one-dimensional discontinuity points inside the visible range."""
+        points: set[float] = set()
+        interval = sp.Interval(float(x_min), float(x_max))
+
+        try:
+            domain = continuous_domain(expr, self.x, interval)
+            intervals = domain.args if isinstance(domain, sp.Union) else (domain,)
+
+            for part in intervals:
+                if not isinstance(part, sp.Interval):
+                    continue
+
+                for end in (part.start, part.end):
+                    if end in (-sp.oo, sp.oo):
+                        continue
+
+                    val = float(end.evalf())
+                    if x_min < val < x_max:
+                        points.add(val)
+        except Exception:
+            pass
+
+        try:
+            denominator = sp.denom(sp.together(expr))
+            roots = sp.solveset(denominator, self.x, domain=interval)
+
+            for root in roots:
+                if root.is_real:
+                    val = float(root.evalf())
+                    if x_min < val < x_max:
+                        points.add(val)
+        except Exception:
+            pass
+
+        return sorted(points)
 
     def _eval_1d(self, expr: sp.Expr, x_vals: np.ndarray) -> np.ndarray:
         fixed = self._fix_real_roots(expr)
@@ -304,23 +355,31 @@ class MathEngine:
         x_max: float = 10,
         clip_value: float = 80,
     ) -> go.Figure:
-        """生成 2D 图像。对奇点/爆炸值做裁剪，避免 1/x 这类函数把 y 轴拉崩。"""
+        """Generate robust 2D plots for ordinary and discontinuous functions."""
+        items = list(expr_list)
         fig = go.Figure()
 
+        break_points: set[float] = set()
+        for expr, _, _ in items:
+            break_points.update(self._domain_break_points(expr, x_min, x_max))
+
         x_main = np.linspace(x_min, x_max, 1601)
-        x_micro = np.linspace(-1e-4, 1e-4, 301)
-        x_vals = np.sort(np.unique(np.concatenate([x_main, x_micro])))
+        local_samples = [
+            np.linspace(point - 1e-3, point + 1e-3, 301)
+            for point in sorted(break_points)
+        ]
+        x_vals = np.sort(np.unique(np.concatenate([x_main, *local_samples]))) if local_samples else x_main
 
         plot_arrays: list[np.ndarray] = []
 
-        for expr, label, color in expr_list:
+        for expr, label, color in items:
             try:
                 y_vals = self._eval_1d(expr, x_vals)
+                y_vals = self._set_nan_near_breaks(x_vals, y_vals, break_points)
                 y_vals = self._break_large_jumps(y_vals)
 
                 y_plot = y_vals.copy()
                 y_plot[np.abs(y_plot) > clip_value] = np.nan
-
             except Exception:
                 continue
 
@@ -328,12 +387,13 @@ class MathEngine:
                 derivative, second_derivative, _, _ = self.get_analysis_2d(expr)
                 yp = self._eval_1d(derivative, x_vals)
                 ypp = self._eval_1d(second_derivative, x_vals)
+                yp = self._set_nan_near_breaks(x_vals, yp, break_points)
+                ypp = self._set_nan_near_breaks(x_vals, ypp, break_points)
 
                 with np.errstate(all="ignore"):
                     curvature_vals = np.abs(ypp) / (1 + yp**2) ** 1.5
 
                 curvature_vals[~np.isfinite(curvature_vals)] = np.nan
-
             except Exception:
                 curvature_vals = np.full_like(x_vals, np.nan, dtype=float)
 
@@ -349,7 +409,7 @@ class MathEngine:
                         "<b>%{name}</b><br>"
                         "x=%{x:.4f}<br>"
                         "y=%{y:.4f}<br>"
-                        "曲率 κ=%{customdata:.4f}"
+                        "曲率 k=%{customdata:.4f}"
                         "<extra></extra>"
                     ),
                     connectgaps=False,
@@ -370,6 +430,9 @@ class MathEngine:
 
             pad = max((y_high - y_low) * 0.15, 1.0)
             y_range = [float(y_low - pad), float(y_high + pad)]
+
+            if break_points and np.nanmax(np.abs(all_y)) > 8:
+                y_range = [min(y_range[0], -10.0), max(y_range[1], 10.0)]
         else:
             y_range = [-10, 10]
 
@@ -377,25 +440,11 @@ class MathEngine:
             template="plotly_white",
             paper_bgcolor="white",
             plot_bgcolor="white",
-            xaxis=dict(
-                range=[x_min, x_max],
-                zeroline=True,
-                gridcolor="#f0f0f0",
-            ),
-            yaxis=dict(
-                range=y_range,
-                zeroline=True,
-                gridcolor="#f0f0f0",
-            ),
+            xaxis=dict(range=[x_min, x_max], zeroline=True, gridcolor="#f0f0f0"),
+            yaxis=dict(range=y_range, zeroline=True, gridcolor="#f0f0f0"),
             dragmode="pan",
             hovermode="x unified",
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1,
-            ),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
 
         return fig
@@ -407,7 +456,7 @@ class MathEngine:
         xy_max: float = 8,
         grid_size: int = 101,
     ) -> go.Figure | None:
-        """生成 3D 图像：透明浅蓝色曲面 + 淡灰色曲线网格。"""
+        """Generate a transparent light-blue surface with pale-gray curve grid lines."""
         t = np.linspace(xy_min, xy_max, grid_size)
         x_grid, y_grid = np.meshgrid(t, t)
 
@@ -415,73 +464,68 @@ class MathEngine:
             z = self._eval_2d(expr, x_grid, y_grid)
             z_plot = np.where(np.abs(z) < 200, z, np.nan)
 
-            z_for_grad = np.nan_to_num(
-                z,
-                nan=0.0,
-                posinf=0.0,
-                neginf=0.0,
-            )
+            z_for_grad = np.nan_to_num(z, nan=0.0, posinf=0.0, neginf=0.0)
             gy, gx = np.gradient(z_for_grad, t, t)
             grad_norm = np.sqrt(gx**2 + gy**2)
             custom = np.stack((gx, gy, grad_norm), axis=-1)
-
         except Exception:
             return None
 
-        fig = go.Figure(
-            data=[
-                go.Surface(
-                    x=x_grid,
-                    y=y_grid,
-                    z=z_plot,
-                    customdata=custom,
-                    colorscale=[
-                        [0.0, "rgba(210,235,248,0.30)"],
-                        [0.5, "rgba(173,216,230,0.45)"],
-                        [1.0, "rgba(120,180,220,0.65)"],
-                    ],
-                    showscale=False,
-                    opacity=0.58,
-                    lighting=dict(
-                        ambient=0.88,
-                        diffuse=0.55,
-                        specular=0.10,
-                        roughness=0.95,
-                        fresnel=0.05,
-                    ),
-                    contours=dict(
-                        x=dict(
-                            show=True,
-                            color="rgba(160,160,160,0.35)",
-                            width=1.0,
-                            highlight=False,
-                        ),
-                        y=dict(
-                            show=True,
-                            color="rgba(160,160,160,0.35)",
-                            width=1.0,
-                            highlight=False,
-                        ),
-                        z=dict(
-                            show=True,
-                            color="rgba(170,170,170,0.30)",
-                            width=1.0,
-                            highlight=False,
-                            usecolormap=False,
-                        ),
-                    ),
-                    hovertemplate=(
-                        "<b>x</b>: %{x:.2f}<br>"
-                        "<b>y</b>: %{y:.2f}<br>"
-                        "<b>z</b>: %{z:.2f}<br>"
-                        "<b>fx≈</b> %{customdata[0]:.2f}<br>"
-                        "<b>fy≈</b> %{customdata[1]:.2f}<br>"
-                        "<b>|∇f|≈</b> %{customdata[2]:.2f}"
-                        "<extra></extra>"
-                    ),
-                )
-            ]
+        fig = go.Figure()
+        fig.add_trace(
+            go.Surface(
+                x=x_grid,
+                y=y_grid,
+                z=z_plot,
+                customdata=custom,
+                colorscale=[[0.0, "#cfefff"], [1.0, "#cfefff"]],
+                showscale=False,
+                opacity=0.46,
+                lighting=dict(
+                    ambient=0.95,
+                    diffuse=0.45,
+                    specular=0.05,
+                    roughness=1.0,
+                    fresnel=0.02,
+                ),
+                hovertemplate=(
+                    "<b>x</b>: %{x:.2f}<br>"
+                    "<b>y</b>: %{y:.2f}<br>"
+                    "<b>z</b>: %{z:.2f}<br>"
+                    "<b>fx</b>: %{customdata[0]:.2f}<br>"
+                    "<b>fy</b>: %{customdata[1]:.2f}<br>"
+                    "<b>|grad f|</b>: %{customdata[2]:.2f}"
+                    "<extra></extra>"
+                ),
+            )
         )
+
+        step = max(grid_size // 10, 6)
+        line_style = dict(color="rgba(150,150,150,0.42)", width=2)
+
+        for idx in range(0, grid_size, step):
+            fig.add_trace(
+                go.Scatter3d(
+                    x=x_grid[idx, :],
+                    y=y_grid[idx, :],
+                    z=z_plot[idx, :],
+                    mode="lines",
+                    line=line_style,
+                    hoverinfo="skip",
+                    showlegend=False,
+                )
+            )
+            fig.add_trace(
+                go.Scatter3d(
+                    x=x_grid[:, idx],
+                    y=y_grid[:, idx],
+                    z=z_plot[:, idx],
+                    mode="lines",
+                    line=line_style,
+                    hoverinfo="skip",
+                    showlegend=False,
+                )
+            )
 
         fig.update_layout(
             paper_bgcolor="white",
@@ -509,3 +553,4 @@ class MathEngine:
         )
 
         return fig
+
